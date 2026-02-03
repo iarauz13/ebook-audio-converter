@@ -82,10 +82,28 @@ Create a readable PDF version of the book (or just one chapter).
 ./run.sh "Find Your Why.epub" --chapter 5 --pdf
 ```
 
-**Example 5: Mix & Match (Chapter + Voice)**
+**Example 5: Convert a Range of Chapters (Single File)**
+Convert Chapters 1 through 10 into one audio file.
+```bash
+./run.sh "Find Your Why.epub" --range 1-10
+```
+
+**Example 6: Convert a Range to Separate Files**
+Convert Chapters 1 through 5, but save them as separate MP3 files (useful for testing just the start of a book).
+```bash
+./run.sh "Find Your Why.epub" --range 1-5 --split
+```
+
+**Example 7: Convert a Range to PDF**
+Create a PDF containing only Chapters 3 through 7.
+```bash
+./run.sh "Find Your Why.epub" --range 3-7 --pdf
+```
+
+**Example 8: Mix & Match (Chapter + Voice)**
 Convert only Chapter 1 using a British voice.
 ```bash
-./run.sh "Find Your Why.epub" --chapter 1 --voice en-US-AvaNeural
+./run.sh "Find Your Why.epub" --chapter 1 --voice en-GB-SoniaNeural
 ```
 
 ## Troubleshooting

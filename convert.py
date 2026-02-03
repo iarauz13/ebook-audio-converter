@@ -78,6 +78,7 @@ async def main():
     parser.add_argument("--split", action="store_true", help="Split into separate chapter files")
     parser.add_argument("--list-voices", action="store_true", help="List available voices")
     parser.add_argument("--chapter", type=int, help="Convert only this specific chapter number (1-based)")
+    parser.add_argument("--range", help="Convert a range of chapters (e.g. '1-10')")
     parser.add_argument("--pdf", action="store_true", help="Convert to PDF instead of Audio")
     
     args = parser.parse_args()
@@ -103,14 +104,37 @@ async def main():
         print("No text found in EPUB.")
         sys.exit(1)
 
+    # Determine which chapters to process
+    start_offset = 1
+    
     # Filter for specific chapter
     if args.chapter:
         if 1 <= args.chapter <= len(chapters):
             print(f"selecting ONLY Chapter {args.chapter}...")
             target_chapter = chapters[args.chapter - 1]
             chapters = [target_chapter]
+            start_offset = args.chapter
         else:
             print(f"Error: Chapter {args.chapter} invalid. This book has {len(chapters)} chapters.")
+            sys.exit(1)
+            
+    # Filter for range
+    elif args.range:
+        try:
+            start_s, end_s = args.range.split('-')
+            start = int(start_s)
+            end = int(end_s)
+            
+            if start < 1 or end > len(chapters) or start > end:
+                raise ValueError("Invalid range bounds")
+                
+            print(f"Selecting range: Chapters {start} to {end}...")
+            chapters = chapters[start-1:end]
+            start_offset = start
+            
+        except ValueError as e:
+            print(f"Error: Invalid range format '{args.range}'. Use format 'start-end' (e.g. '1-10').")
+            print(f"Details: {e}")
             sys.exit(1)
 
     # Calculate statistics
@@ -121,6 +145,8 @@ async def main():
         print(f"--- Statistics (PDF Mode) ---")
         if args.chapter:
             print(f"Mode:             Single Chapter ({args.chapter})")
+        elif args.range:
+            print(f"Mode:             Range ({args.range})")
         print(f"Total Text:       {total_chars:,} characters")
         print(f"Est. Wait Time:   Very fast (seconds)")
         print(f"------------------")
@@ -134,6 +160,8 @@ async def main():
         print(f"--- Statistics (Audio Mode) ---")
         if args.chapter:
             print(f"Mode:             Single Chapter ({args.chapter})")
+        elif args.range:
+            print(f"Mode:             Range ({args.range})")
         print(f"Total Text:       {total_chars:,} characters")
         print(f"Est. Audio Length: {int(est_audio_hours)}h {int(est_audio_min % 60)}m")
         print(f"Est. Wait Time:    ~{int(est_proc_seconds // 60)}m {int(est_proc_seconds % 60)}s")
@@ -149,10 +177,7 @@ async def main():
         print(f"Splitting into separate files in folder: {output_dir}/")
         
         for i, text in enumerate(chapters):
-            if args.chapter:
-                 chapter_num = args.chapter
-            else:
-                 chapter_num = i + 1
+            chapter_num = start_offset + i
             
             ext = ".pdf" if args.pdf else ".mp3"
             filename = f"{chapter_num:02d}_Chapter{ext}"
@@ -178,6 +203,8 @@ async def main():
             base = os.path.splitext(os.path.basename(args.epub_file))[0]
             if args.chapter:
                 suffix = f"_Chapter{args.chapter}"
+            elif args.range:
+                suffix = f"_Chapters_{start}-{end}"
             else:
                 suffix = ""
             
