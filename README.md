@@ -54,6 +54,13 @@ Run this command to see every voice available (hundreds!):
 ./run.sh --list-voices
 ```
 
+**3. List Chapters**  
+EPUBs often have hidden introductions or appendices. Use this to see the correct chapter numbers (indices) before converting specific ones.  
+```bash
+./run.sh "My Book.epub" --list-chapters
+```
+*Result: A list of chapters with their Index, Length, and Title.*
+
 ## Real World Examples
 
 **Example 1: British Voice**
@@ -106,12 +113,27 @@ Convert only Chapter 1 using a British voice.
 ./run.sh "Find Your Why.epub" --chapter 1 --voice en-GB-SoniaNeural
 ```
 
+**Example 9: Mix & Match (Manual Mode / No TOC)**
+If your book doesn't have a TOC or you suspect it's wrong, force the scanner to guess hints from the text headers:
+```bash
+./run.sh "Find Your Why.epub" --no-toc --split
+```
+
 ## Troubleshooting
 
 - **"Command not found"**: Ensure you are using `./run.sh` with the `./` prefix.
 - **Python errors**: Try running `bash setup.sh` again to fix dependencies.
 
 ## FAQ & Common Scenarios
+
+**Q: Why do my chapter numbers look different?**
+A: We now use the **Table of Contents** (TOC) to identify chapters. This includes things like "Foreword", "Introduction", and "Acknowledgements" as their own items. This is more accurate but means "Chapter 1" might be Item #8 in the list. Always use `--list-chapters` to check!
+
+**Q: What does "Confidence: Low" mean?**
+A: It means the converter couldn't find a proper Table of Contents. It fell back to reading the file list directly (Spine). This works for simple books but might include weird fragments. Use header detection (`--no-toc`) if the result is bad.
+
+**Q: Why does it say [SHORT] next to a chapter?**
+A: That chapter has less than 500 characters. It's usually a dedicate page, a quote, or a blank page. You probably want to skip it when converting specific ranges.
 
 **Q: It's taking too long! Can I stop it?**
 A: **Yes.** Press `Ctrl + C` in your Terminal to stop the process immediately.
