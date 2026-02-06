@@ -7,6 +7,6 @@ source venv/bin/activate
 
 echo "Installing dependencies..."
 # pip install epub2tts # Original plan, but requires python 3.11
-pip install edge-tts EbookLib beautifulsoup4 xhtml2pdf
+pip install edge-tts EbookLib beautifulsoup4 xhtml2pdf pypdf mutagen Pillow tqdm flask
 
 echo "Setup complete! Run 'source venv/bin/activate' to use."

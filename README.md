@@ -35,6 +35,10 @@ Convert your EPUB ebooks into high-quality Audiobooks (MP3) using AI voices (Mic
     ```bash
     ./run.sh "My Book.epub"
     ```
+    *or*
+    ```bash
+    ./run.sh "My Book.pdf"
+    ```
 
 ### Common Options
 

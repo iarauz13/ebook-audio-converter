@@ -8,6 +8,14 @@ import ebooklib
 from ebooklib import epub
 import edge_tts
 from xhtml2pdf import pisa
+import pypdf
+import mutagen
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TRCK, APIC
+from PIL import Image, ImageDraw, ImageFont
+import io
+import json
+import time
+from tqdm import tqdm
 
 # Suppress annoying ebooklib warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='ebooklib')
@@ -317,10 +325,194 @@ def extract_text_fallback(book):
     }
     return chapters, metadata
 
-async def text_to_speech(text, output_file, voice):
+def extract_text_from_pdf(pdf_path):
+    """
+    Extracts text from a PDF file.
+    Attempts to look for Outline (bookmarks) to identify chapters.
+    """
+    print(f"Extracting text from PDF: {pdf_path}")
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+    except Exception as e:
+        print(f"Error reading PDF: {e}")
+        sys.exit(1)
+    
+    chapters = []
+    metadata = {
+        'method': 'PDF (Whole)',
+        'confidence': 'Medium',
+        'warnings': []
+    }
+    
+    # helper to extract text from a page range
+    def get_text_range(start_page, end_page):
+        text_parts = []
+        # end_page is exclusive in logic, but inclusive in pypdf loop if we do range
+        # reader.pages is 0-indexed
+        for p_i in range(start_page, end_page):
+            try:
+                page_text = reader.pages[p_i].extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+            except Exception:
+                pass
+        return "\n".join(text_parts)
+
+    def search_outline(outline_items, reader):
+        """Recursively search outline for destinations."""
+        results = []
+        for item in outline_items:
+            if isinstance(item, list):
+                results.extend(search_outline(item, reader))
+            elif isinstance(item, pypdf.generic.Destination):
+                # get page number
+                try:
+                    page_num = reader.get_destination_page_number(item)
+                    if page_num is not None:
+                         results.append({'title': item.title, 'page': page_num})
+                except:
+                    pass
+        return results
+
+    outline = reader.outline
+    if outline:
+        toc_entries = search_outline(outline, reader)
+        if toc_entries:
+             # Sort by page number just in case
+             toc_entries.sort(key=lambda x: x['page'])
+             
+             metadata['method'] = 'PDF Outline'
+             metadata['confidence'] = 'High'
+             
+             for i, entry in enumerate(toc_entries):
+                 start_page = entry['page']
+                 
+                 # Determine end page
+                 if i + 1 < len(toc_entries):
+                     end_page = toc_entries[i+1]['page']
+                 else:
+                     end_page = len(reader.pages)
+                 
+                 # Sanity check
+                 if end_page <= start_page:
+                     end_page = start_page + 1 # At least one page
+                     
+                 text = get_text_range(start_page, end_page)
+                 
+                 # Clean up text slightly (remove excessive whitespace)
+                 text = text.replace('\xa0', ' ').strip()
+                 
+                 if len(text) > 50:
+                     chapters.append({
+                         'title': entry['title'],
+                         'text': text,
+                         'warnings': []
+                     })
+    
+    # Fallback to single chunk if no outline or no chapters found
+    if not chapters:
+        full_text = get_text_range(0, len(reader.pages))
+        full_text = full_text.replace('\xa0', ' ').strip()
+        if len(full_text) > 50:
+            chapters.append({
+                'title': 'Full Document',
+                'text': full_text,
+                'warnings': ['No Outline found, treating as single chapter']
+            })
+            metadata['warnings'].append("No PDF Outline found.")
+    
+    # If still nothing
+    if not chapters:
+        metadata['confidence'] = 'Low'
+        metadata['warnings'].append("No text extracted from PDF.")
+        
+    return chapters, metadata
+
+
+async def text_to_speech(text, output_file, voice, rate=None):
     """Generates audio for the given text."""
-    communicate = edge_tts.Communicate(text, voice)
+    if rate:
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
+    else:
+        communicate = edge_tts.Communicate(text, voice)
     await communicate.save(output_file)
+
+def generate_cover_image(title, author):
+    """Generates a simple cover image."""
+    width, height = 600, 600
+    color = (44, 62, 80) # Dark Blue Grey
+    text_color = (255, 255, 255)
+    
+    img = Image.new('RGB', (width, height), color)
+    d = ImageDraw.Draw(img)
+    
+    # Try to use a default font, otherwise use default
+    try:
+        # MacOS default font path
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 40)
+        font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 30)
+    except:
+        font = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+    # Draw Text (Centered roughly)
+    d.text((width/2, height/3), title[:30], fill=text_color, anchor="mm", font=font)
+    if len(title) > 30:
+         d.text((width/2, height/3 + 50), title[30:], fill=text_color, anchor="mm", font=font)
+         
+    d.text((width/2, 2*height/3), author, fill=text_color, anchor="mm", font=font_small)
+    
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='JPEG')
+    return img_byte_arr.getvalue()
+
+def inject_id3_tags(filepath, title, author, album, track_num, total_tracks, cover_bytes=None):
+    """Injects ID3 tags into the MP3 file."""
+    try:
+        audio = ID3(filepath)
+    except mutagen.id3.ID3NoHeaderError:
+        audio = ID3()
+    
+    # Title
+    audio.add(TIT2(encoding=3, text=title))
+    # Author
+    audio.add(TPE1(encoding=3, text=author))
+    # Album
+    audio.add(TALB(encoding=3, text=album))
+    # Track Number
+    audio.add(TRCK(encoding=3, text=f"{track_num}/{total_tracks}"))
+    
+    # Cover Art
+    if cover_bytes:
+        audio.add(APIC(
+            encoding=3,
+            mime='image/jpeg',
+            type=3, # 3 is for the cover(front) image
+            desc='Cover',
+            data=cover_bytes
+        ))
+        
+    audio.save(filepath)
+
+def load_progress(output_dir):
+    """Loads the progress JSON file."""
+    progress_file = os.path.join(output_dir, "progress.json")
+    if os.path.exists(progress_file):
+        try:
+            with open(progress_file, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_progress(output_dir, chapter_index, chapter_title):
+    """Marks a chapter as complete in the progress file."""
+    progress = load_progress(output_dir)
+    progress[str(chapter_index)] = {"title": chapter_title, "status": "done", "timestamp": time.time()}
+    
+    progress_file = os.path.join(output_dir, "progress.json")
+    with open(progress_file, 'w') as f:
+        json.dump(progress, f, indent=2)
 
 def text_to_pdf(text, title, output_file):
     """Generates PDF for the given text."""
@@ -353,6 +545,11 @@ async def main():
     parser.add_argument("--chapter", type=int, help="Convert only this specific chapter number (1-based)")
     parser.add_argument("--range", help="Convert a range of chapters (e.g. '1-10')")
     parser.add_argument("--pdf", action="store_true", help="Convert to PDF instead of Audio")
+    parser.add_argument("--author", help="Override Author Name (for ID3 tags)", default="Unknown Author")
+    parser.add_argument("--title", help="Override Book Title (for ID3 tags)", default=None)
+    parser.add_argument("--rate", help="Playback speed (e.g. '+20%%', '-10%%')", default=None)
+
+
     
     args = parser.parse_args()
 
@@ -370,22 +567,39 @@ async def main():
         sys.exit(1)
 
     print(f"Reading {args.epub_file}...")
-    try:
-        book = epub.read_epub(args.epub_file)
-    except Exception as e:
-        print(f"Error reading EPUB: {e}")
-        sys.exit(1)
-
     # Try TOC extraction first (unless disabled)
     toc_results = None
-    if not args.no_toc:
-        toc_results = extract_chapters_using_toc(book)
     
-    if toc_results and toc_results[0]: # Check if chapters were found
-        chapters, metadata = toc_results
+    # 1. PDF Handling
+    if args.epub_file.lower().endswith('.pdf'):
+        chapters, metadata = extract_text_from_pdf(args.epub_file)
+        book_title = args.title if args.title else os.path.basename(args.epub_file).replace('.pdf', '')
+        author = args.author
+    
+    # 2. EPUB Handling
     else:
-        # Fallback
-        chapters, metadata = extract_text_fallback(book)
+        # Load EPUB
+        try:
+            book = epub.read_epub(args.epub_file)
+            book_title = book.get_metadata('DC', 'title')[0][0] if book.get_metadata('DC', 'title') else "Unknown Title"
+            author = book.get_metadata('DC', 'creator')[0][0] if book.get_metadata('DC', 'creator') else args.author
+            
+            # Override if provided
+            if args.title: book_title = args.title
+            if args.author and args.author != "Unknown Author": author = args.author
+            
+        except Exception as e:
+            print(f"Error reading EPUB: {e}")
+            sys.exit(1)
+
+        if not args.no_toc:
+            toc_results = extract_chapters_using_toc(book)
+        
+        if toc_results and toc_results[0]: # Check if chapters were found
+            chapters, metadata = toc_results
+        else:
+            # Fallback
+            chapters, metadata = extract_text_from_pdf_fallback(book) if False else extract_text_fallback(book)
 
     print(f"\n--- Extraction Info ---")
     print(f"Method:     {metadata['method']}")
@@ -471,12 +685,16 @@ async def main():
         est_audio_hours = est_audio_min / 60
         est_proc_seconds = est_audio_seconds / 20 
         
+        est_proc_seconds = est_audio_seconds / 20 
+        
         print(f"--- Statistics (Audio Mode) ---")
         if args.chapter or args.range:
              print(f"Mode:             Selected Content")
         print(f"Total Text:       {total_chars:,} characters")
         print(f"Est. Audio Length: {int(est_audio_hours)}h {int(est_audio_min % 60)}m")
         print(f"Est. Wait Time:    ~{int(est_proc_seconds // 60)}m {int(est_proc_seconds % 60)}s")
+        if args.rate:
+             print(f"Playback Rate:    {args.rate}")
         print(f"------------------")
 
     if args.split:
@@ -485,11 +703,28 @@ async def main():
         output_dir = f"{base_name}{suffix}"
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
+            
+        # Generate Cover Art once
+        cover_bytes = generate_cover_image(book_title, author)
         
         print(f"Splitting into separate files in folder: {output_dir}/")
         
-        for i, ch in enumerate(selected_chapters):
+        # Load previous progress
+        progress_data = load_progress(output_dir)
+        
+        # Use tqdm for progress bar
+        pbar = tqdm(selected_chapters, unit="chap")
+        for i, ch in enumerate(pbar):
+            pbar.set_description(f"Processing Ch {start_index+i}")
             chapter_num = start_index + i
+            
+            # CHECK PROGRESS
+            if str(chapter_num) in progress_data and os.path.exists(os.path.join(output_dir, f"{chapter_num:02d}_" + "".join(c for c in ch['title'] if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')[:30] + (".pdf" if args.pdf else ".mp3"))):
+                 # Weak check: filename logic here is duplicated, but if ID exists and file ostensibly exists (logic below), we skip
+                 # Simpler: just check json key
+                 # print(f"  Skipping Chapter {chapter_num} (already done).") # Quiet for tqdm
+                 continue
+            
             # Clean title for filename
             clean_title = "".join(c for c in ch['title'] if c.isalnum() or c in (' ', '_', '-')).strip()
             clean_title = clean_title.replace(' ', '_')[:30] # Truncate long titles
@@ -498,14 +733,34 @@ async def main():
             filename = f"{chapter_num:02d}_{clean_title}{ext}"
             filepath = os.path.join(output_dir, filename)
             
-            print(f"  Converting {chapter_num}. {ch['title']} -> {filename}...")
-            try:
-                if args.pdf:
-                    text_to_pdf(ch['text'], ch['title'], filepath)
-                else:
-                    await text_to_speech(ch['text'], filepath, args.voice)
-            except Exception as e:
-                print(f"  Error converting chapter {chapter_num}: {e}")
+            # Double check file existence if JSON missed it
+            if os.path.exists(filepath):
+                 # print(f"  Skipping {filename} (File exists).")
+                 save_progress(output_dir, chapter_num, ch['title'])
+                 continue
+            
+            # print(f"  Converting {chapter_num}. {ch['title']} -> {filename}...")
+            
+            # RETRY LOGIC
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    if args.pdf:
+                        text_to_pdf(ch['text'], ch['title'], filepath)
+                    else:
+                        await text_to_speech(ch['text'], filepath, args.voice, args.rate)
+                        inject_id3_tags(filepath, ch['title'], author, book_title, i+1, len(selected_chapters), cover_bytes)
+                    
+                    # Success
+                    save_progress(output_dir, chapter_num, ch['title'])
+                    break # Exit retry loop
+                    
+                except Exception as e:
+                    # print(f"    Error (Attempt {attempt+1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2) # Wait a bit before retry
+                    # else:
+                        # print(f"    Failed to convert Chapter {chapter_num}.")
         
         print(f"Done! All saved in {output_dir}/")
 
@@ -532,7 +787,11 @@ async def main():
             if args.pdf:
                 text_to_pdf(full_text, f"{base} - Selected Chapters", output_filename)
             else:
-                await text_to_speech(full_text, output_filename, args.voice)
+                await text_to_speech(full_text, output_filename, args.voice, args.rate)
+                # For single file, tracks are 1/1
+                cover_bytes = generate_cover_image(book_title, author)
+                inject_id3_tags(output_filename, book_title, author, book_title, 1, 1, cover_bytes)
+                
             print(f"Done! Saved to {output_filename}")
         except Exception as e:
             print(f"Error during conversion: {e}")
