@@ -43,10 +43,17 @@ You can specify a different voice using `--voice`.
 ```
 
 **Common Voices**:
-- `en-US-AvaNeural` (Default, Female)
-- `en-US-AndrewNeural` (Male)
-- `en-US-GuyNeural` (Male)
-- `en-GB-SoniaNeural` (British Female)
+- `en-US-AvaNeural`: **Ava** (US Female) — *Soft, Professional*
+- `en-US-AndrewNeural`: **Andrew** (US Male) — *Warm, Trustworthy*
+- `en-US-EmmaNeural`: **Emma** (US Female) — *Cheerful, Clear*
+- `en-US-BrianNeural`: **Brian** (US Male) — *Deep, Narrator-like*
+- `en-US-JennyNeural`: **Jenny** (US Female) — *Natural, Conversational*
+- `en-US-GuyNeural`: **Guy** (US Male) — *Casual, Radio-style*
+- `en-US-AriaNeural`: **Aria** (US Female) — *Expressive, Bright*
+- `en-GB-SoniaNeural`: **Sonia** (UK Female) — *Sophisticated, News-style (Best for Grandma)*
+- `en-GB-RyanNeural`: **Ryan** (UK Male) — *Crisp, Authoritative*
+- `en-US-RogerNeural`: **Roger** (US Male) — *Mature, Storyteller (Best for Grandpa)*
+- `en-GB-ThomasNeural`: **Thomas** (UK Male) — *Classic, Formal (Old-school British)*
 
 **Want to see all voices?**
 Run this command to see every voice available (hundreds!):
@@ -77,6 +84,10 @@ EPUBs often have hidden introductions or appendices. Use this to see the correct
 To convert only Chapter 5 (for example):
 ```bash
 ./run.sh "Find Your Why.epub" --chapter 5
+```
+*(Combined with other flags - separate ranges and voice)*:
+```bash
+./run.sh "Find Your Why.epub" --range 4-10 --voice en-US-BrianNeural --split
 ```
 
 **Example 4: Convert to PDF**

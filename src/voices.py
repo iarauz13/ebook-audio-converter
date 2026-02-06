@@ -8,6 +8,8 @@ RECOMMENDED_VOICES = {
     "Aria (US, Female, Neural)": "en-US-AriaNeural",
     "Sonia (UK, Female, Neural)": "en-GB-SoniaNeural",
     "Ryan (UK, Male, Neural)": "en-GB-RyanNeural",
+    "Roger (US, Male, Neural)": "en-US-RogerNeural",
+    "Thomas (UK, Male, Neural)": "en-GB-ThomasNeural",
 }
 
 def get_recommended_voices():
