@@ -120,41 +120,92 @@ async def main():
         sys.exit(0)
 
     # Determine which chapters to process
-    selected_chapters = []
-    start_index = 0
-    
-    # Filter for specific chapter
-    if args.chapter:
-        if 1 <= args.chapter <= len(chapters):
-            print(f"Selecting ONLY Chapter {args.chapter}: {chapters[args.chapter - 1]['title']}")
-            selected_chapters = [chapters[args.chapter - 1]]
-            start_index = args.chapter # For naming
+    # --- INTERACTIVE SELECTION LOOP ---
+    while True:
+        # Resolve which chapters are selected based on current args
+        selected_chapters = []
+        start_index = 0
+        
+        if args.chapter:
+            if 1 <= args.chapter <= len(chapters):
+                selected_chapters = [chapters[args.chapter - 1]]
+                start_index = args.chapter
+            else:
+                print(f"\n[!] Error: Chapter {args.chapter} is invalid. Range is 1-{len(chapters)}.")
+                selected_chapters = [] # Invalid
+        
+        elif args.range:
+            try:
+                start_s, end_s = args.range.split('-')
+                start = int(start_s)
+                end = int(end_s)
+                if start < 1 or end > len(chapters) or start > end:
+                    print(f"\n[!] Error: Invalid range {start}-{end}. Max is {len(chapters)}.")
+                    selected_chapters = []
+                else:
+                    selected_chapters = chapters[start-1:end]
+                    start_index = start
+            except ValueError:
+                 print(f"\n[!] Error: Bad format '{args.range}'. Use '1-10'.")
+                 selected_chapters = []
         else:
-            print(f"Error: Chapter {args.chapter} invalid. This book has {len(chapters)} chapters.")
-            sys.exit(1)
+            # Default: All
+            selected_chapters = chapters
+            start_index = 1
             
-    # Filter for range
-    elif args.range:
-        try:
-            start_s, end_s = args.range.split('-')
-            start = int(start_s)
-            end = int(end_s)
+        # Display Current Selection (Interactive Mode Only)
+        if not selected_chapters:
+             print("\n--- No valid chapters selected ---")
+        else:
+             print(f"\n--- Current Selection ---")
+             # List individual chapters
+             for i, ch in enumerate(selected_chapters):
+                 real_index = start_index + i
+                 print(f"  {real_index:02d}. {ch['title']}")
+             
+             # Calculate Stats for display
+             total_chars = sum(len(c['text']) for c in selected_chapters)
+             audio_mins = (total_chars / 15) / 60
+             # Processing is usually ~20x faster than real-time audio
+             proc_mins = audio_mins / 20 
+             
+             print(f"\n  Total Audio:      ~{int(audio_mins)} mins")
+             print(f"  Est Conversion:   ~{proc_mins:.1f} mins (Fast!)")
+             print(f"  Voice:            {args.voice}")
+             print("-------------------------")
+
+        # Ask User
+        choice = input("\nIs this correct? [Y/n/q] or enter new range (e.g. '5-10'): ").strip().lower()
+        
+        if choice in ('y', 'yes', ''):
+            if not selected_chapters: continue # Can't proceed
+            break # Proceed
             
-            if start < 1 or end > len(chapters) or start > end:
-                raise ValueError("Invalid range bounds")
-                
-            print(f"Selecting range: {start} to {end}...")
-            selected_chapters = chapters[start-1:end]
-            start_index = start
+        elif choice in ('q', 'quit', 'exit'):
+            print("Aborted.")
+            sys.exit(0)
             
-        except ValueError as e:
-            print(f"Error: Invalid range format '{args.range}'. Use format 'start-end' (e.g. '1-10').")
-            print(f"Details: {e}")
-            sys.exit(1)
-            
-    else:
-        selected_chapters = chapters
-        start_index = 1
+        elif '-' in choice: # User typed a range like "5-10"
+             # Update args and loop again
+             args.range = choice
+             args.chapter = None # Clear this
+             print(f"-> Updating range to {choice}...")
+             continue
+             
+        elif choice.isdigit(): # User typed a single number "5"
+             args.chapter = int(choice)
+             args.range = None
+             print(f"-> Updating to single Chapter {choice}...")
+             continue
+             
+        else:
+             print("Please type 'y' to start, 'q' to quit, or a range like '1-5' to change selection.")
+
+    # --- FINAL CONFIRMATION ---
+    print(f"\n[Ready] Converting {len(selected_chapters)} chapters to {'PDF' if args.pdf else 'Audio'}...")
+    if args.cloud: print("[Cloud] Saving to iCloud Drive.")
+    
+    # --------------------------
 
     # Determine Base Output Directory
     if args.cloud:
@@ -194,7 +245,7 @@ async def main():
             print(f"Error generating preview: {e}")
         sys.exit(0)
 
-    # Calculate statistics
+    # Calculate statistics (Final)
     total_chars = sum(len(c['text']) for c in selected_chapters)
 
     if args.pdf:
@@ -328,4 +379,8 @@ async def main():
             print(f"Error during conversion: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n\n[!] Operation cancelled by user. Exiting...")
+        sys.exit(0)

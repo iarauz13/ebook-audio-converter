@@ -7,7 +7,10 @@ Convert your EPUB ebooks into high-quality Audiobooks (MP3) using AI voices (Mic
 - **Chapter Splitting**: Option to split the audiobook into separate MP3 files per chapter.
 - **Smart Parsing**: Automatically detects Table of Contents (TOC) for accurate chapter breaks.
 - **PDF Support**: Convert EPUBs or specific chapters to PDF.
-- **Range Support**: Convert specific ranges of chapters.
+- **Metadata Injection**: Adds correct Author, Title, and Cover Art to the MP3 files.
+- **Safety Check**: Interactively confirms chapter selection.
+- **Auto-Resume**: Saves progress; simply restart to continue if interrupted.
+- **Cloud Sync**: Can save directly to iCloud Drive for instant access on your iPhone.
 
 ## Requirements
 

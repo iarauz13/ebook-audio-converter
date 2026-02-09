@@ -137,8 +137,14 @@ If your book doesn't have a TOC or you suspect it's wrong, force the scanner to 
 
 ## FAQ & Common Scenarios
 
-**Q: Why do my chapter numbers look different?**
-A: We now use the **Table of Contents** (TOC) to identify chapters. This includes things like "Foreword", "Introduction", and "Acknowledgements" as their own items. This is more accurate but means "Chapter 1" might be Item #8 in the list. Always use `--list-chapters` to check!
+**Q: Why does it ask "Is this correct?" before starting?**
+A: This is a safety check. Ebooks often have hidden "chapters" like the Introduction, Copyright, or Foreword. This means "Chapter 1" might actually be Index #5. The app lists them for you so you can confirm you are converting the right content. If it's wrong, you can just type the new range (e.g. `5-10`) right there!
+
+**Q: It stuck at 29% for a long time. What do I do?**
+A: **Don't panic.** It's likely a network hiccup.
+1.  Press `Ctrl + C` to stop it.
+2.  Press `Up Arrow` and `Enter` to run the command again.
+3.  **It will auto-resume.** It remembers what chapters it finished and will skip them, picking up exactly where it left off.
 
 **Q: What does "Confidence: Low" mean?**
 A: It means the converter couldn't find a proper Table of Contents. It fell back to reading the file list directly (Spine). This works for simple books but might include weird fragments. Use header detection (`--no-toc`) if the result is bad.
@@ -164,3 +170,13 @@ A: It is saved **in the same folder** as the book you converted.
 - **Single File:** Look for `BookName.mp3` right next to `BookName.epub`.
 - **Split Mode:** Look for a new folder named `BookName_Audiobook`.
 - **Easy way to find it:** Type `open .` in your Terminal to open the current folder in Finder.
+
+**Q: How do I get this on my iPhone immediately?**
+A: Use the **`--cloud`** flag!
+1.  Run the command with `--cloud` at the end:
+    ```bash
+    ./run.sh "My Book.epub" --cloud
+    ```
+2.  Open the **Files App** on your iPhone.
+3.  Go to `iCloud Drive` -> `Audiobooks`.
+4.  Your file will be there, ready to play!
