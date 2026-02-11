@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, Button, Alert, ScrollView, TextInput, Modal, TouchableOpacity, FlatList, ActivityIndicator, Image, Animated, Easing } from 'react-native';
+import { StyleSheet, Text, View, Button, Alert, ScrollView, TextInput, Modal, TouchableOpacity, FlatList, ActivityIndicator, Image, Animated, Easing, useColorScheme } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { parseEpub, Book } from './utils/epubParser';
 import * as Speech from 'expo-speech';
 import { intelligentChapterFilter } from './utils/chapterFilter';
@@ -19,9 +19,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Design System Constants
 // Design System Constants (iOS Redesign Phase 1)
-const theme = {
+const lightTheme = {
   colors: {
-    background: '#F2F2F7', // systemGray6 for overall background
+    background: '#F2F2F7', // systemGray6
     card: '#FFFFFF',       // systemBackground
     text: {
       primary: '#000000',      // label
@@ -35,13 +35,13 @@ const theme = {
     border: '#C6C6C8', // separator
   },
   typography: {
-    largeTitle: { fontSize: 34, fontWeight: '700' as '700', color: '#000000' },
-    title1: { fontSize: 28, fontWeight: '700' as '700', color: '#000000' },
-    title2: { fontSize: 22, fontWeight: '700' as '700', color: '#000000' },
-    title3: { fontSize: 20, fontWeight: '600' as '600', color: '#000000' },
-    body: { fontSize: 17, fontWeight: '400' as '400', color: '#000000' },
-    subheadline: { fontSize: 15, fontWeight: '400' as '400', color: '#3C3C4399' },
-    caption1: { fontSize: 12, fontWeight: '400' as '400', color: '#3C3C4399' },
+    largeTitle: { fontSize: 34, fontWeight: '700' as '700' },
+    title1: { fontSize: 28, fontWeight: '700' as '700' },
+    title2: { fontSize: 22, fontWeight: '700' as '700' },
+    title3: { fontSize: 20, fontWeight: '600' as '600' },
+    body: { fontSize: 17, fontWeight: '400' as '400' },
+    subheadline: { fontSize: 15, fontWeight: '400' as '400' },
+    caption1: { fontSize: 12, fontWeight: '400' as '400' },
   },
   spacing: {
     xxs: 4,
@@ -59,7 +59,91 @@ const theme = {
   }
 };
 
+const darkTheme = {
+  ...lightTheme,
+  colors: {
+    background: '#000000', // systemBlack
+    card: '#1C1C1E',       // systemGray6 Dark
+    text: {
+      primary: '#FFFFFF',
+      secondary: '#EBEBF599',
+      tertiary: '#EBEBF54D',
+      tint: '#0A84FF',
+      success: '#30D158',
+      warning: '#FF9F0A',
+      destructive: '#FF453A',
+    },
+    border: '#38383A',
+  }
+};
+
+// Reusable iOS-style Button Component
+const IOSButton = ({ title, onPress, variant = 'primary', style, textStyle, disabled, accessibilityLabel, theme }: { title: string, onPress: () => void, variant?: 'primary' | 'secondary' | 'destructive' | 'success' | 'outline', style?: any, textStyle?: any, disabled?: boolean, accessibilityLabel?: string, theme: typeof lightTheme }) => {
+  let backgroundColor = theme.colors.text.tint;
+  let textColor = '#FFFFFF';
+  let borderWidth = 0;
+  let borderColor = 'transparent';
+
+  switch (variant) {
+    case 'secondary':
+      backgroundColor = theme.colors.background === '#000000' ? '#2C2C2E' : '#E5E5EA'; // Adjust secondary for dark mode
+      textColor = theme.colors.text.tint;
+      break;
+    case 'destructive':
+      backgroundColor = theme.colors.text.destructive;
+      textColor = '#FFFFFF';
+      break;
+    case 'success':
+      backgroundColor = theme.colors.text.success;
+      textColor = '#FFFFFF';
+      break;
+    case 'outline':
+      backgroundColor = 'transparent';
+      textColor = theme.colors.text.tint;
+      borderWidth = 1;
+      borderColor = theme.colors.text.tint;
+      break;
+  }
+
+  if (disabled) {
+    backgroundColor = theme.colors.text.tertiary; // Use theme color
+    textColor = theme.colors.text.secondary;
+  }
+
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel || title}
+      style={[
+        {
+          backgroundColor,
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          borderRadius: theme.borderRadius.md,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth,
+          borderColor,
+          opacity: disabled ? 0.6 : 1,
+        },
+        style
+      ]}
+    >
+      <Text style={[{ color: textColor, fontWeight: '600', fontSize: 17 }, textStyle]}>{title}</Text>
+    </TouchableOpacity>
+  );
+};
+
+
+
 export default function App() {
+  const colorScheme = useColorScheme();
+  const theme = colorScheme === 'dark' ? darkTheme : lightTheme;
+  const styles = useMemo(() => getStyles(theme), [theme]);
+
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [book, setBook] = useState<Book | null>(null);
   const [parsing, setParsing] = useState(false);
@@ -579,9 +663,9 @@ export default function App() {
               {/* Step 1: Import */}
               <Text style={styles.subtitle}>Step 1: Import Book</Text>
               <Text style={styles.helperText}>Note: Please select one EPUB file at a time.</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: theme.spacing.md }}>
-                <Button title="Select File" onPress={pickDocument} />
-                {selectedFile && <Button title="Reset / Clear" onPress={async () => {
+              <View style={{ gap: theme.spacing.md }}>
+                <IOSButton title="Select File" onPress={pickDocument} theme={theme} />
+                {selectedFile && <IOSButton title="Reset / Clear" onPress={async () => {
                   setSelectedFile(null);
                   setBook(null);
                   setRangeText("");
@@ -591,7 +675,7 @@ export default function App() {
                   setProgress(0);
                   // Clear State
                   await AsyncStorage.removeItem(STORAGE_KEY);
-                }} color="red" />}
+                }} variant="destructive" theme={theme} />}
               </View>
 
               {parsing && <Text style={styles.status}>Parsing File...</Text>}
@@ -615,9 +699,12 @@ export default function App() {
                       <TextInput
                         style={styles.input}
                         placeholder="e.g. 1-5, 8"
+                        placeholderTextColor={theme.colors.text.secondary}
                         value={rangeText}
                         onChangeText={setRangeText}
                         keyboardType="numbers-and-punctuation"
+                        accessibilityLabel="Chapter Range Input"
+                        accessibilityHint="Enter chapter numbers or ranges to convert"
                       />
                       <Text style={styles.previewText}>
                         Will convert {getSelectedIndices().length} of {book.chapters.length} chapters
@@ -625,12 +712,12 @@ export default function App() {
 
                       {/* Step 3: Voice Selection */}
                       <Text style={styles.sectionHeader}>Step 3: Choose Narrator</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.spacing.xs, backgroundColor: '#f9f9f9', padding: theme.spacing.md, borderRadius: theme.borderRadius.sm, borderWidth: 1, borderColor: theme.colors.border }}>
-                        <Text numberOfLines={1} style={{ flex: 1, marginRight: theme.spacing.md }}>{selectedVoice ? selectedVoice.name : "Default"}</Text>
-                        <Button title="Change" onPress={() => setShowVoiceModal(true)} />
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.spacing.md, backgroundColor: theme.colors.background, padding: theme.spacing.md, borderRadius: theme.borderRadius.md }}>
+                        <Text numberOfLines={1} style={{ flex: 1, marginRight: theme.spacing.md, ...theme.typography.body }}>{selectedVoice ? selectedVoice.name : "Default"}</Text>
+                        <IOSButton title="Change" onPress={() => setShowVoiceModal(true)} variant="secondary" style={{ paddingVertical: 6, paddingHorizontal: 12 }} textStyle={{ fontSize: 15 }} theme={theme} />
                       </View>
                       <Text style={styles.helperText}>Tip: Download "Enhanced" voices in iOS Settings &gt; Accessibility &gt; Spoken Content.</Text>
-                      {selectedVoice && <View style={{ marginBottom: 15 }}><Button title={`Preview ${selectedVoice.name}`} onPress={() => previewVoice(selectedVoice)} /></View>}
+                      {selectedVoice && <View style={{ marginBottom: 15 }}><IOSButton title={`Preview ${selectedVoice.name}`} onPress={() => previewVoice(selectedVoice)} variant="outline" theme={theme} /></View>}
 
                       {/* Step 4: Storage & Convert */}
                       <Text style={styles.sectionHeader}>Step 4: Convert</Text>
@@ -647,12 +734,10 @@ export default function App() {
                           <Text style={styles.progressText}>{Math.round(progress * 100)}%</Text>
                         </View>
                       ) : (
-                        <View>
-                          <Button title="Convert & Save" onPress={startConversion} />
+                        <View style={{ gap: 10 }}>
+                          <IOSButton title="Convert & Save" onPress={startConversion} theme={theme} />
                           {generatedPath && (
-                            <View style={{ marginTop: 10 }}>
-                              <Button title="Share / Export" onPress={shareAudiobook} color="#28a745" />
-                            </View>
+                            <IOSButton title="Share / Export" onPress={shareAudiobook} variant="success" theme={theme} />
                           )}
                         </View>
                       )}
@@ -715,7 +800,9 @@ export default function App() {
                     </TouchableOpacity>
                   )}
                 />
-                <Button title="Close" onPress={() => setShowVoiceModal(false)} />
+                <View style={{ marginTop: theme.spacing.md }}>
+                  <IOSButton title="Close" onPress={() => setShowVoiceModal(false)} variant="secondary" theme={theme} />
+                </View>
               </View>
             </View>
           </Modal>
@@ -727,7 +814,7 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -859,11 +946,12 @@ const styles = StyleSheet.create({
     ...theme.typography.body
   },
   input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    padding: 10,
-    borderRadius: theme.borderRadius.sm,
-    marginBottom: theme.spacing.xs
+    backgroundColor: theme.colors.background, // systemGray6
+    padding: 12,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
+    ...theme.typography.body,
+    color: theme.colors.text.primary,
   },
   previewText: {
     ...theme.typography.caption1,
