@@ -111,38 +111,40 @@ We are abandoning the "Python Web Wrapper" strategy. Evidence suggests it is eco
 
 
  
- ## 6. Design System 2.0: Motion & Interaction (Phase 3 Roadmap)
+ ## 6. Design System 2.0: Motion & Interaction (Implemented)
  
  ### 6.1. Motion & Advanced Interactions
  **Goal**: Create a fluid, responsive interface that feels alive.
  
  #### A. File Import Transition
- *   **Current**: Instant file picker appearance.
- *   **Target**: 
-     1.  Echo animation: Neutral → Looking Down (0.3s).
-     2.  Card content fades out (0.2s).
-     3.  File picker slides up from bottom with spring (0.4s, dampingRatio: 0.8).
+ *   **Implemented**: 
+     1.  Echo animation: Neutral → Reading (when file selected).
+     2.  Spring animation for file selection state change.
  
  #### B. Chapter Selection State
- *   **Current**: Instant input update.
- *   **Target**: 
-     1.  Typing "1-5, 8" triggers Echo "Thinking" pose (0.2s).
-     2.  Debounce (0.5s).
-     3.  Validation success triggers Echo "Happy" pose (0.2s).
-     4.  Green badge "✓ Will convert X chapters" scales in (spring).
+ *   **Implemented**: 
+     1.  Typing triggers Echo "Thinking" pose (Looking Left).
+     2.  Debounce (800ms).
+     3.  Validation success triggers Echo "Happy" pose (Celebration).
+     4.  Green badge "✓ Will convert X chapters" appears with spring animation.
  
  #### C. Conversion Start
- *   **Current**: Instant screen change.
- *   **Target**: Echo "Celebrates" → Card zooms out → New screen slides in from right.
+ *   **Implemented**: Echo "Celebrates" → Conversion status updates with spring animation.
+ 
+ #### D. Sleeping Loop (New)
+ *   **Implemented**: 
+     1.  Inactive (>10m) triggers `Echo_Sleeping_Inactive` (transition).
+     2.  Completion triggers `Echo_Sleeping_2` (loop indefinitely).
+     3.  Any interaction wakes Echo to Neutral.
  
  ### 6.2. Empty State Illustrations
  **Goal**: Delight users even when there is no content.
  
  *   **Initial State**: Echo holding an open book ("Echo is ready for a new story").
- *   **Empty Library**: Echo sleeping on a bookshelf ("Your audiobook library is empty").
- *   **Conversion Complete**: Echo with headphones, eyes closed peacefuly ("Your audiobook is ready").
+ *   **Empty Library**: *Planned*
+ *   **Conversion Complete**: *Planned*
  
- ### 6.3. Variable Haptic Feedback
+ ### 6.3. Variable Haptic Feedback (Implemented)
  **Goal**: Tactile reinforcement for all interactions.
  
  | Action | Haptic Type | Intensity |
@@ -154,29 +156,30 @@ We are abandoning the "Python Web Wrapper" strategy. Evidence suggests it is eco
  | Conversion Start | Heavy | Significant |
  | Conversion Complete | Success | Major |
  
- ### 6.4. Iconography Consistency
+ ### 6.4. Iconography Consistency (Implemented)
  **Goal**: Unified visual language using only SF Symbols.
  
- | Element | Current | Replace With (SF Symbol) |
+ | Element | Previous | Current (SF Symbol) |
  | :--- | :--- | :--- |
- | "Ready to read?" | 📖 Emoji | `book.fill` |
+ | "Ready to read?" | 📖 Emoji | `book.fill` (Removed for cleaner UI) |
  | File Import | None | `arrow.down.doc.fill` |
  | Reset/Clear | None | `xmark.circle.fill` |
  | Narrator Change | Text | `person.crop.circle` |
  | Success Checkmark | "✓" Text | `checkmark.circle.fill` |
-
- ### 6.5. Earthy Color Palette (Rebranding)
+ | Streak Badge | 🔥 Emoji | `flame.fill` |
+ 
+ ### 6.5. Earthy Color Palette (Implemented)
  **Goal**: Replace standard iOS blue/red with a warm, "literary" earthy theme.
-
+ 
  **Brand Colors**:
  *   **Primary (#9EB23B)**: Olive Green (Actions, Links, Success).
  *   **Primary Light (#C7D36F)**: Light Olive (Highlights, Badges).
  *   **Neutral Light (#FCF9C6)**: Cream Yellow (Card Backgrounds, Inputs).
  *   **Neutral Base (#E0DECA)**: Sand Beige (Borders, Disabled).
  *   **Destructive (#A84855)**: Muted Burgundy (Reset, Delete, Error).
-
+ 
  **UI Element Mapping**:
- | Element | Current | New Color |
+ | Element | Previous | New Color |
  | :--- | :--- | :--- |
  | "Select File" Button | `systemBlue` | **#9EB23B (Olive)** |
  | "Reset / Clear" Button | `systemRed` | **#A84855 (Burgundy)** |
@@ -184,3 +187,471 @@ We are abandoning the "Python Web Wrapper" strategy. Evidence suggests it is eco
  | Card Background | `systemBackground` | **#FCF9C6 (Cream)** |
  | Streak Badge | `systemOrange` | **#C7D36F (Light Olive)** |
  | Shadows | Black/Gray | **Warm Tan** |
+
+
+
+
+ Diagnosing "Unnatural Reading" - Systematic Troubleshooting
+The Real Problem is Likely NOT the Voice
+
+Based on your market research, users complained that apps read "Smith comma twenty-twenty-four" and "bracket one bracket" - this isn't a voice quality issue, it's a text preprocessing problem.
+
+You're probably feeding raw EPUB HTML directly to TTS without cleaning it.
+Diagnostic Test: What's Actually Being Read?
+Step 1: Output the Actual Text Being Sent to TTS
+typescript
+
+// In your TTS generation function, add this:
+
+function generateAudioForChapter(chapter: Chapter) {
+  const rawText = chapter.content;
+  
+  // DEBUG: Log what's being sent to TTS
+  console.log("=== RAW TEXT SENT TO TTS ===");
+  console.log(rawText.substring(0, 500)); // First 500 chars
+  console.log("=== END ===");
+  
+  // Then generate audio
+  await textToSpeech(rawText);
+}
+```
+
+**Look for these red flags in the output:**
+
+❌ **HTML Tags:**
+```
+<p>The story begins</p> <em>many years ago</em>
+→ TTS reads: "paragraph the story begins paragraph em many years ago em"
+```
+
+❌ **In-text Citations:**
+```
+Climate change is accelerating (Smith, 2024).
+→ TTS reads: "Climate change is accelerating Smith comma two thousand twenty four"
+```
+
+❌ **Footnote References:**
+```
+The evidence is clear[1] and undeniable.
+→ TTS reads: "The evidence is clear bracket one bracket and undeniable"
+```
+
+❌ **URLs:**
+```
+Visit https://example.com for more info
+→ TTS reads: "Visit h t t p s colon slash slash example dot com..."
+```
+
+❌ **Special Characters:**
+```
+He said—without hesitation—yes.
+→ TTS reads: "He said em dash without hesitation em dash yes" (wrong rhythm)
+```
+
+---
+
+## Most Likely Issues (In Order of Probability)
+
+### **Issue #1: Citations Not Being Removed** (90% probability)
+
+From your validation research, this was the **#1 complaint**:
+
+> "Every footnote, reference, you name it, gets read out loud, making it as unnatural as a robot doing the cha-cha."
+
+**Test:** Open a random chapter and check if you see:
+- `(Author, Year)` patterns
+- `[1]`, `[2]` footnote markers
+- Superscript numbers like¹ or²
+
+**If YES:** Your citation-skipping filter from earlier isn't working or isn't being applied.
+
+---
+
+### **Issue #2: HTML Artifacts** (80% probability)
+
+EPUBs are HTML. If you're not stripping tags, TTS reads them.
+
+**Test:** Check if your text contains:
+- `<p>`, `</p>`, `<em>`, `<strong>`, `<br/>`, `<div>`
+- `&nbsp;` (reads as "ampersand n b s p")
+- `&mdash;` (reads as "ampersand m dash")
+
+**If YES:** You need HTML-to-plain-text conversion.
+
+---
+
+### **Issue #3: No Sentence Boundaries** (70% probability)
+
+TTS engines need proper punctuation for natural pauses.
+
+**Test:** Check if your text has:
+- Run-on sentences (no periods for 200+ words)
+- Missing paragraph breaks
+- Dialogue without proper quote handling
+
+**If YES:** You need sentence normalization.
+
+---
+
+### **Issue #4: Wrong Voice Speed** (60% probability)
+
+Default TTS speed is often too fast or robotic.
+
+**Test:** Listen to a 30-second sample. Does it sound:
+- Rushed (too fast)?
+- Monotone (no emotion)?
+- Breathless (no pauses)?
+
+**If YES:** Adjust speed + add SSML pauses.
+
+---
+
+### **Issue #5: Voice Doesn't Match Content** (50% probability)
+
+Using a male voice for a female protagonist, or vice versa, feels wrong.
+
+**Test:** Is the narrator gender appropriate for the content?
+
+---
+
+## The Solution: Multi-Stage Text Preprocessing Pipeline
+
+You need to clean text BEFORE sending to TTS:
+```
+RAW EPUB CONTENT
+    ↓
+[Stage 1] Strip HTML tags
+    ↓
+[Stage 2] Remove citations & footnotes
+    ↓
+[Stage 3] Normalize punctuation
+    ↓
+[Stage 4] Handle special content (equations, URLs, tables)
+    ↓
+[Stage 5] Add SSML for prosody
+    ↓
+CLEAN TEXT → TTS ENGINE
+
+Implementation: Text Cleaning Pipeline
+typescript
+
+// text-cleaner.ts
+
+/**
+ * Stage 1: Strip HTML and decode entities
+ */
+function stripHTML(html: string): string {
+  // Remove script and style tags entirely
+  let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  
+  // Remove all HTML tags but preserve their text content
+  text = text.replace(/<[^>]+>/g, ' ');
+  
+  // Decode HTML entities
+  const entities: { [key: string]: string } = {
+    '&nbsp;': ' ',
+    '&mdash;': '—',
+    '&ndash;': '–',
+    '&ldquo;': '"',
+    '&rdquo;': '"',
+    '&lsquo;': "'",
+    '&rsquo;': "'",
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+  };
+  
+  for (const [entity, char] of Object.entries(entities)) {
+    text = text.replace(new RegExp(entity, 'g'), char);
+  }
+  
+  return text;
+}
+
+/**
+ * Stage 2: Remove citations and footnotes (THIS IS CRITICAL)
+ */
+function removeCitations(text: string): string {
+  // Remove inline citations: (Author, Year), (Author et al., Year)
+  text = text.replace(/\([A-Z][a-z]+(?:\s+et al\.)?,?\s+\d{4}[a-z]?\)/g, '');
+  
+  // Remove footnote markers: [1], [23], [a]
+  text = text.replace(/\[\d+\]/g, '');
+  text = text.replace(/\[[a-z]\]/g, '');
+  
+  // Remove superscript numbers (footnote markers)
+  text = text.replace(/[¹²³⁴⁵⁶⁷⁸⁹⁰]+/g, '');
+  
+  // Remove reference to "see also" type citations
+  text = text.replace(/\(see [^)]+\)/gi, '');
+  
+  return text;
+}
+
+/**
+ * Stage 3: Normalize punctuation for natural pauses
+ */
+function normalizePunctuation(text: string): string {
+  // Replace em-dashes with natural pause markers
+  // "He said—without thinking—yes" → "He said, without thinking, yes"
+  text = text.replace(/—/g, ', ');
+  
+  // Replace multiple spaces with single space
+  text = text.replace(/\s+/g, ' ');
+  
+  // Ensure proper spacing after punctuation
+  text = text.replace(/([.!?])\s*([A-Z])/g, '$1 $2');
+  
+  // Add space after commas if missing
+  text = text.replace(/,(?=[^\s])/g, ', ');
+  
+  // Remove spaces before punctuation
+  text = text.replace(/\s+([.,!?;:])/g, '$1');
+  
+  return text;
+}
+
+/**
+ * Stage 4: Handle special content that shouldn't be read literally
+ */
+function handleSpecialContent(text: string): string {
+  // Replace URLs with readable text
+  text = text.replace(
+    /https?:\/\/[^\s]+/g, 
+    '[link]'  // Or just remove: ''
+  );
+  
+  // Replace email addresses
+  text = text.replace(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    '[email address]'
+  );
+  
+  // Handle common abbreviations for better pronunciation
+  const abbreviations: { [key: string]: string } = {
+    'Dr.': 'Doctor',
+    'Mr.': 'Mister',
+    'Mrs.': 'Misses',
+    'Ms.': 'Miss',
+    'Prof.': 'Professor',
+    'etc.': 'et cetera',
+    'i.e.': 'that is',
+    'e.g.': 'for example',
+    'vs.': 'versus',
+  };
+  
+  for (const [abbr, full] of Object.entries(abbreviations)) {
+    text = text.replace(new RegExp(abbr, 'g'), full);
+  }
+  
+  return text;
+}
+
+/**
+ * Stage 5: Detect and remove non-narrative sections
+ */
+function removeNonNarrative(text: string): string {
+  // Detect table structures (often have many numbers/pipes)
+  const lines = text.split('\n');
+  const filteredLines = lines.filter(line => {
+    // If line has > 50% numbers/symbols, likely a table
+    const nonAlpha = line.replace(/[a-zA-Z\s]/g, '').length;
+    const ratio = nonAlpha / Math.max(line.length, 1);
+    return ratio < 0.5;
+  });
+  
+  return filteredLines.join('\n');
+}
+
+/**
+ * MASTER FUNCTION: Apply all cleaning stages
+ */
+export function cleanTextForTTS(rawContent: string): string {
+  let cleaned = rawContent;
+  
+  // Stage 1: Strip HTML
+  cleaned = stripHTML(cleaned);
+  
+  // Stage 2: Remove citations (CRITICAL for your app)
+  cleaned = removeCitations(cleaned);
+  
+  // Stage 3: Normalize punctuation
+  cleaned = normalizePunctuation(cleaned);
+  
+  // Stage 4: Handle special content
+  cleaned = handleSpecialContent(cleaned);
+  
+  // Stage 5: Remove non-narrative content
+  cleaned = removeNonNarrative(cleaned);
+  
+  // Final cleanup: trim and collapse whitespace
+  cleaned = cleaned.trim();
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n'); // Max 2 line breaks
+  
+  return cleaned;
+}
+
+Usage in Your Conversion Flow
+typescript
+
+// In your chapter-to-audio converter:
+
+async function convertChapterToAudio(chapter: Chapter): Promise<AudioFile> {
+  // BEFORE (wrong):
+  // const audioBuffer = await textToSpeech(chapter.content);
+  
+  // AFTER (correct):
+  const rawContent = chapter.content;
+  const cleanedText = cleanTextForTTS(rawContent);
+  
+  // DEBUG: Compare before/after
+  console.log('=== BEFORE CLEANING ===');
+  console.log(rawContent.substring(0, 300));
+  console.log('=== AFTER CLEANING ===');
+  console.log(cleanedText.substring(0, 300));
+  
+  const audioBuffer = await textToSpeech(cleanedText);
+  return audioBuffer;
+}
+
+Voice Quality Improvements (If Text Cleaning Isn't Enough)
+Option 1: Use Enhanced iOS Voices
+
+Current: You're probably using default "Samantha" (basic quality)
+
+Better: Use "Enhanced" or "Premium" voices
+typescript
+
+// iOS TTS implementation
+import { Speech } from 'expo-speech';
+
+const speakText = async (text: string) => {
+  Speech.speak(text, {
+    voice: 'com.apple.voice.premium.en-US.Ava',  // Premium voice
+    rate: 0.9,      // Slightly slower than default (1.0)
+    pitch: 1.0,     // Natural pitch
+    language: 'en-US',
+  });
+};
+
+Available Premium iOS Voices (Better Quality):
+
+    com.apple.voice.premium.en-US.Ava (Female, clear)
+    com.apple.voice.premium.en-US.Zoe (Female, expressive)
+    com.apple.voice.premium.en-US.Samantha (Female, warm)
+    com.apple.voice.enhanced.en-US.Reed (Male, natural)
+
+Tell users: "Download 'Enhanced' voices in iOS Settings > Accessibility > Spoken Content > Voices"
+Option 2: Adjust Speed and Add Pauses
+typescript
+
+const speakText = async (text: string) => {
+  // Add pauses at paragraph breaks for more natural reading
+  const textWithPauses = text.replace(/\n\n/g, '\n\n[[pause:500]]\n\n');
+  
+  Speech.speak(textWithPauses, {
+    voice: 'com.apple.voice.premium.en-US.Ava',
+    rate: 0.85,   // Slower = more comprehensible (0.5-1.0 range)
+    pitch: 1.0,
+  });
+};
+
+Option 3: Add SSML for Better Prosody (Advanced)
+
+If using a cloud TTS API (Azure, ElevenLabs), you can add markup:
+typescript
+
+function addSSML(text: string): string {
+  // Add pauses at chapter starts
+  let ssml = '<break time="1s"/>' + text;
+  
+  // Add emphasis to dialogue
+  ssml = ssml.replace(/"([^"]+)"/g, '<emphasis level="moderate">$1</emphasis>');
+  
+  // Slow down for complex sentences
+  // (Optional: detect sentences with 30+ words and add rate adjustment)
+  
+  return `<speak>${ssml}</speak>`;
+}
+```
+
+---
+
+## Testing Framework: Does Your Fix Work?
+
+### **Test 1: Academic Paper**
+
+**Input text (before cleaning):**
+```
+The results indicate significant correlation (p<0.05) between variables[1]. 
+See Smith et al. (2024) for details.
+```
+
+**Expected output (after cleaning):**
+```
+The results indicate significant correlation between variables.
+```
+
+**TTS should read:** "The results indicate significant correlation between variables." ✅
+
+---
+
+### **Test 2: Fiction Novel**
+
+**Input text (before cleaning):**
+```
+<p>He paused—uncertain—then said, "I don't know."</p>
+<p><em>What would she think?</em> he wondered.</p>
+```
+
+**Expected output (after cleaning):**
+```
+He paused, uncertain, then said, "I don't know."
+What would she think? he wondered.
+```
+
+**TTS should read naturally** with appropriate pauses and emotion. ✅
+
+---
+
+### **Test 3: URL in Content**
+
+**Input text:**
+```
+For more information, visit https://example.com/longpath
+```
+
+**Expected output:**
+```
+For more information, visit [link]
+
+TTS should read: "For more information, visit link." ✅ (Not "h t t p s colon slash...")
+Diagnostic Checklist: What's Wrong With Your TTS?
+
+Run through this checklist:
+
+    Log the raw text being sent to TTS (first 500 chars)
+    Check for HTML tags (<p>, <em>, etc.)
+    Check for citations ((Author, Year), [1])
+    Check for URLs (http://, https://)
+    Check for em-dashes (— causing weird rhythm)
+    Check for entity codes (&nbsp;, &mdash;)
+    Listen to 1 minute - Does it sound breathless? (Missing pauses)
+    Check voice quality - Are you using "Enhanced" voices?
+    Check speed - Is rate set to 0.85-0.95? (1.0 default is too fast)
+
+My Bet: You're Missing Text Cleaning
+
+Based on your market research finding:
+
+    "Every footnote, reference gets read out loud"
+
+I'm 90% confident the issue is:
+
+    You're not stripping HTML tags
+    You're not removing citations (despite planning to)
+    You're not normalizing punctuation
+
+Implement the cleanTextForTTS() function above and test immediately.

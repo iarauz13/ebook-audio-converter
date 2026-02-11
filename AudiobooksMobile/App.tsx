@@ -7,6 +7,7 @@ import * as Speech from 'expo-speech';
 import { intelligentChapterFilter } from './utils/chapterFilter';
 import { Video, ResizeMode } from 'expo-av';
 import { Haptics } from './utils/haptics';
+import { cleanTextForTTS } from './utils/textCleaner';
 
 import { SymbolView, SymbolViewProps } from 'expo-symbols';
 import { Platform, UIManager, LayoutAnimation } from 'react-native';
@@ -496,11 +497,20 @@ export default function App() {
     setPlayingChapter(index);
     setMascotAction('reading');
 
-    const textToRead = chapter.content || "No content found in this chapter.";
+    const rawText = chapter.content || "No content found in this chapter.";
+    const cleanedText = cleanTextForTTS(rawText);
 
-    Speech.speak(textToRead, {
+    // DEBUG: Log what's being sent to TTS (as requested)
+    console.log("=== RAW TEXT SENT TO TTS ===");
+    console.log(rawText.substring(0, 300));
+    console.log("=== CLEANED TEXT ===");
+    console.log(cleanedText.substring(0, 300));
+    console.log("=== END ===");
+
+    Speech.speak(cleanedText, {
       rate: 0.85,
-      voice: selectedVoice?.identifier,
+      // voice: selectedVoice?.identifier, // Use selected voice
+      // Enhanced voices are often preferred
       onDone: () => {
         setPlayingChapter(null);
         setMascotAction('neutral');
@@ -633,7 +643,8 @@ export default function App() {
       await new Promise(r => setTimeout(r, 500));
 
       // Save dummy chapter text logic
-      await FileSystem.writeAsStringAsync(`${storagePath}/Chapter ${chapterIdx + 1} - ${chapter.title.replace(/[^a-z0-9 ]/gi, '')}.txt`, chapter.content);
+      const cleanedChapterContent = cleanTextForTTS(chapter.content || "");
+      await FileSystem.writeAsStringAsync(`${storagePath}/Chapter ${chapterIdx + 1} - ${chapter.title.replace(/[^a-z0-9 ]/gi, '')}.txt`, cleanedChapterContent);
 
       setProgress((i + 1) / selectedIndices.length);
     }

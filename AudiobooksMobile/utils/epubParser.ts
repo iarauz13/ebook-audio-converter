@@ -225,8 +225,18 @@ export const parseEpub = async (uri: string): Promise<Book> => {
       const cleanText = content
         .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, "")
         .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, "")
-        .replace(/<[^>]+>/g, '\n')
-        .replace(/\s+/g, ' ')
+        // Pre-process common block tags to ensure newlines
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<\/div>/gi, '\n\n')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<li\b[^>]*>/gi, '\n• ')
+        .replace(/<\/h[1-6]>/gi, '\n\n')
+        // Strip remaining tags
+        .replace(/<[^>]+>/g, ' ')
+        // Collapse horizontal whitespace (tabs, non-breaking spaces) but PRESERVE newlines
+        .replace(/[ \t\r\f\v]+/g, ' ')
+        // Limit consecutive newlines to 2
+        .replace(/\n\s*\n\s*\n+/g, '\n\n')
         .trim();
 
       // We no longer duplicate filtering logic here. 
