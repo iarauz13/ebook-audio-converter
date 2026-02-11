@@ -50,8 +50,20 @@ We are abandoning the "Python Web Wrapper" strategy. Evidence suggests it is eco
 | Stage | Action Items | Confidence | Status |
 | :--- | :--- | :--- | :--- |
 | **3.1 Infrastructure** | **Auth**: Implement Apple Sign-In (Required) + Firebase Auth. | 95% | *Future* |
-| | **Cloud TTS**: Integrate Azure Speech SDK for "Pro" voice streaming. | 90% | *Future* |
+| | **Cloud Voices**: Integrate Azure Speech SDK / ElevenLabs for "Pro" high-quality streaming voices (online only). | 90% | *Future* |
 | **3.2 Payments** | **IAP**: Integrate RevenueCat for subscription handling ($7.99/mo). | 95% | *Future* |
+
+| **3.3 Mascot & Gamification** | **"Echo" the Fennec Fox**: \n- **Concept**: Interactive mascot (Duolingo-style) that reacts to user activity.\n- **Mechanics**: "Streak" tracking (days in a row).\n- **States**: Happy (listening), Sleepy (idle), Sad (broken streak).\n- **Widget**: Home Screen widget showing current streak and Echo's mood. | 0% | *New Idea* |
+| **3.4 File Formats** | **PDF Support**: Text extraction via `pdf.js` or native modules (currently simulated). | 50% | *In Progress* |
+
+### Phase 4: Sharing & Export
+*Goal: Frictionless file management without complex file pickers.*
+
+| Stage | Action Items | Confidence | Status |
+| :--- | :--- | :--- | :--- |
+| **4.2 File Management** | **Library View**: A dedicated tab to manage (delete/rename/share) previously converted books stored in the app's sandbox. | 85% | *Future* |
+| **4.3 UX Polish** | **Reset & Metadata**: Add "Go Back/Reset" button to clear selection. Improve TOC parsing to capture full chapter strings (e.g., "Chapter 1 - The Start") instead of just "Chapter 1". | 95% | *Done* |
+| **4.4 Layout** | **Safe Area**: Wrap app in `SafeAreaProvider` for dynamic island/notch support. Use `ScrollView` for full accessibility + extra top padding for title visibility. | 100% | *Done* |
 
 ---
 
