@@ -6,7 +6,16 @@ import { parseEpub, Book } from './utils/epubParser';
 import * as Speech from 'expo-speech';
 import { intelligentChapterFilter } from './utils/chapterFilter';
 import { Video, ResizeMode } from 'expo-av';
+import { Haptics } from './utils/haptics';
 
+import { SymbolView, SymbolViewProps } from 'expo-symbols';
+import { Platform, UIManager, LayoutAnimation } from 'react-native';
+
+if (Platform.OS === 'android') {
+  if (UIManager.setLayoutAnimationEnabledExperimental) {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  }
+}
 const STORAGE_KEY = 'audiobooks_app_state_v1';
 const STREAK_KEY = 'audiobooks_streak_v1';
 const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -21,18 +30,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Design System Constants (iOS Redesign Phase 1)
 const lightTheme = {
   colors: {
-    background: '#F2F2F7', // systemGray6
-    card: '#FFFFFF',       // systemBackground
+    background: '#FDFCF5', // (Neutral Base - warm off-white)
+    card: '#FCF9C6',       // (Neutral Light - Cream)
     text: {
-      primary: '#000000',      // label
-      secondary: '#3C3C4399',  // secondaryLabel (60% opacity)
-      tertiary: '#3C3C434D',   // tertiaryLabel (30% opacity)
-      tint: '#007AFF',         // systemBlue
-      success: '#34C759',      // systemGreen
-      warning: '#FF9500',      // systemOrange
-      destructive: '#FF3B30',  // systemRed
+      primary: 'rgba(0, 0, 0, 0.87)',      // label
+      secondary: 'rgba(0, 0, 0, 0.55)',  // secondaryLabel
+      tertiary: 'rgba(0, 0, 0, 0.30)',   // tertiaryLabel
+      tint: '#9EB23B',         // (Primary - Olive Green)
+      success: '#9EB23B',      // (Primary - Olive Green)
+      warning: '#C7D36F',      // (Primary Light - Light Olive or Warm Tan #D4A574) - sticking to user preference for badge background
+      destructive: '#A84855',  // (Destructive - Burgundy)
     },
-    border: '#C6C6C8', // separator
+    border: '#E0DECA', // (Neutral Base - Sand Beige)
+    inputBackground: '#F5F3E8', // Slightly darker cream for inputs
+    shadow: '#D4A574', // Warm Tan
   },
   typography: {
     largeTitle: { fontSize: 34, fontWeight: '700' as '700' },
@@ -68,17 +79,19 @@ const darkTheme = {
       primary: '#FFFFFF',
       secondary: '#EBEBF599',
       tertiary: '#EBEBF54D',
-      tint: '#0A84FF',
-      success: '#30D158',
-      warning: '#FF9F0A',
-      destructive: '#FF453A',
+      tint: '#9EB23B', // Keep Olive for brand consistency? Or lighten? Let's use Olive.
+      success: '#9EB23B',
+      warning: '#C7D36F',
+      destructive: '#FF453A', // Keep standard Red for dark mode visibility or Burgundy? Burgundy might be too dark. User said #A84855.
     },
     border: '#38383A',
+    inputBackground: '#1C1C1E', // Dark input
+    shadow: '#000000',
   }
 };
 
 // Reusable iOS-style Button Component
-const IOSButton = ({ title, onPress, variant = 'primary', style, textStyle, disabled, accessibilityLabel, theme }: { title: string, onPress: () => void, variant?: 'primary' | 'secondary' | 'destructive' | 'success' | 'outline', style?: any, textStyle?: any, disabled?: boolean, accessibilityLabel?: string, theme: typeof lightTheme }) => {
+const IOSButton = ({ title, icon, onPress, variant = 'primary', style, textStyle, disabled, accessibilityLabel, theme }: { title: string, icon?: SymbolViewProps['name'], onPress: () => void, variant?: 'primary' | 'secondary' | 'destructive' | 'success' | 'outline', style?: any, textStyle?: any, disabled?: boolean, accessibilityLabel?: string, theme: typeof lightTheme }) => {
   let backgroundColor = theme.colors.text.tint;
   let textColor = '#FFFFFF';
   let borderWidth = 0;
@@ -86,8 +99,9 @@ const IOSButton = ({ title, onPress, variant = 'primary', style, textStyle, disa
 
   switch (variant) {
     case 'secondary':
-      backgroundColor = theme.colors.background === '#000000' ? '#2C2C2E' : '#E5E5EA'; // Adjust secondary for dark mode
-      textColor = theme.colors.text.tint;
+      // Hover/Pressed is Primary Light (#C7D36F) but for Secondary Variant let's use Neutral Base (#E0DECA) if light theme
+      backgroundColor = theme.colors.background === '#000000' ? '#2C2C2E' : '#E0DECA';
+      textColor = theme.colors.text.primary; // Dark text for contrast on Sand
       break;
     case 'destructive':
       backgroundColor = theme.colors.text.destructive;
@@ -112,7 +126,14 @@ const IOSButton = ({ title, onPress, variant = 'primary', style, textStyle, disa
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={() => {
+        if (!disabled) {
+          if (variant === 'destructive') Haptics.warning();
+          else if (variant === 'secondary') Haptics.medium();
+          else Haptics.medium(); // Default
+        }
+        onPress();
+      }}
       disabled={disabled}
       activeOpacity={0.7}
       accessibilityRole="button"
@@ -127,11 +148,14 @@ const IOSButton = ({ title, onPress, variant = 'primary', style, textStyle, disa
           justifyContent: 'center',
           borderWidth,
           borderColor,
+          flexDirection: 'row', // Align icon and text
+          gap: 8,
           opacity: disabled ? 0.6 : 1,
         },
         style
       ]}
     >
+      {icon && <SymbolView name={icon} tintColor={textColor} style={{ width: 20, height: 20 }} />}
       <Text style={[{ color: textColor, fontWeight: '600', fontSize: 17 }, textStyle]}>{title}</Text>
     </TouchableOpacity>
   );
@@ -169,7 +193,8 @@ export default function App() {
   const videoRef = useRef<Video>(null);
   const checkActivityTimeout = useRef<NodeJS.Timeout | null>(null);
   const [videoSource, setVideoSource] = useState(require('./assets/Echo_Neutral_2.mp4'));
-  const [isLooping, setIsLooping] = useState(true);
+  const [mascotState, setMascotState] = useState<'neutral' | 'reading' | 'celebrate' | 'sleeping_transition' | 'sleeping_loop' | 'thinking' | 'happy'>('neutral');
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
 
 
@@ -180,15 +205,12 @@ export default function App() {
     if (checkActivityTimeout.current) clearTimeout(checkActivityTimeout.current);
 
     // If we were sleeping, wake up!
-    if (videoSource === require('./assets/Echo_Sleeping_Inactive.mp4')) {
-      setVideoSource(require('./assets/Echo_Neutral_2.mp4'));
-      setIsLooping(true);
+    if (mascotState === 'sleeping_transition' || mascotState === 'sleeping_loop') {
+      setMascotAction('neutral');
     }
 
     checkActivityTimeout.current = setTimeout(() => {
-      // Go to sleep
-      setVideoSource(require('./assets/Echo_Sleeping_Inactive.mp4'));
-      setIsLooping(true);
+      setMascotAction('sleeping_transition');
     }, INACTIVITY_TIMEOUT_MS);
   };
 
@@ -350,7 +372,7 @@ export default function App() {
   const pickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/epub+zip', 'application/pdf'], // Filter for EPUBs and PDFs
+        type: ['application/pdf', 'application/epub+zip'], // Filter for EPUBs and PDFs
         copyToCacheDirectory: true
       });
 
@@ -361,6 +383,16 @@ export default function App() {
       if (result.assets && result.assets.length > 0) {
         const file = result.assets[0];
         console.log('File picked:', file);
+
+        // Animate transition
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.spring);
+
+        setSelectedFile(file);
+        setGeneratedPath(null); // Reset previous conversion
+        setConversionStatus("");
+        setIsConverting(false);
+        setProgress(0);
+        setMascotAction('reading'); // Echo reads the new bookfile
 
         // Determine extension
         const isPdf = file.name.toLowerCase().endsWith('.pdf');
@@ -455,6 +487,7 @@ export default function App() {
     if (playingChapter === index) {
       Speech.stop();
       setPlayingChapter(null);
+      setMascotAction('neutral');
       return;
     }
 
@@ -470,25 +503,42 @@ export default function App() {
       voice: selectedVoice?.identifier,
       onDone: () => {
         setPlayingChapter(null);
+        setMascotAction('neutral');
       },
-      onStopped: () => setPlayingChapter(null),
+      onStopped: () => {
+        setPlayingChapter(null);
+        setMascotAction('neutral');
+      },
     });
   };
 
-  const setMascotAction = (action: 'reading' | 'neutral' | 'celebrate') => {
+  const setMascotAction = (action: 'reading' | 'neutral' | 'celebrate' | 'sleeping_transition' | 'sleeping_loop' | 'thinking' | 'happy') => {
+    setMascotState(action);
     switch (action) {
       case 'reading':
         setVideoSource(require('./assets/Echo_Looking_Down.mp4'));
-        setIsLooping(true);
         break;
       case 'celebrate':
         setVideoSource(require('./assets/Echo_Celebrating.mp4'));
-        setIsLooping(true);
+        break;
+      case 'sleeping_transition':
+        setVideoSource(require('./assets/Echo_Sleeping_Inactive.mp4'));
+        break;
+      case 'sleeping_loop':
+        setVideoSource(require('./assets/Echo_Sleeping_2.mp4'));
+        break;
+      case 'thinking':
+        setVideoSource(require('./assets/Echo_Thinking.mp4'));
+        break;
+      case 'happy':
+        // Reuse celebrate or use a specific happy one if available. 
+        // Using celebrate for now as requested "Echo switches to 'happy' pose" 
+        // and user mapped "happy" to "Echo_Looking_Left" or "Echo_Celebrating" in plan.
+        setVideoSource(require('./assets/Echo_Celebrating.mp4'));
         break;
       case 'neutral':
       default:
         setVideoSource(require('./assets/Echo_Neutral_2.mp4'));
-        setIsLooping(true);
         break;
     }
   };
@@ -503,19 +553,21 @@ export default function App() {
 
   const handleMascotTap = () => {
     resetInactivityTimer(); // Reset sleep timer on interaction
-    if (videoSource === require('./assets/Echo_Celebrating.mp4')) return; // Already celebrating
+    if (mascotState === 'celebrate') return; // Already celebrating
 
     // Play celebration
-    setVideoSource(require('./assets/Echo_Celebrating.mp4'));
-    setIsLooping(false); // Play once then stop (handled by status update)
+    setMascotAction('celebrate');
   };
 
   const onPlaybackStatusUpdate = (status: any) => {
     if (status.didJustFinish) {
       // If we just finished celebrating, go back to neutral
-      if (videoSource === require('./assets/Echo_Celebrating.mp4')) {
-        setVideoSource(require('./assets/Echo_Neutral_2.mp4'));
-        setIsLooping(true);
+      if (mascotState === 'celebrate') {
+        setMascotAction('neutral');
+      }
+      // If we finished transition to sleep, start loop
+      if (mascotState === 'sleeping_transition') {
+        setMascotAction('sleeping_loop');
       }
     }
   };
@@ -645,38 +697,62 @@ export default function App() {
                   source={videoSource}
                   useNativeControls={false}
                   resizeMode={ResizeMode.COVER}
-                  isLooping={isLooping}
+                  isLooping={['neutral', 'reading', 'sleeping_loop', 'thinking'].includes(mascotState)}
                   shouldPlay={true}
                   isMuted={true}
                   onPlaybackStatusUpdate={onPlaybackStatusUpdate}
                 />
               </TouchableOpacity>
 
-              <Text style={styles.title}>Audiobooks Mobile</Text>
+              <Text style={styles.title}>Audiobooks to Go</Text>
 
               <View style={styles.streakBadge}>
-                <Text style={styles.streakText}>🔥 {streak} Day Streak</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <SymbolView name="flame.fill" tintColor="#3C3C43" style={{ width: 16, height: 16, marginRight: 6 }} />
+                  <Text style={styles.streakText}>{streak} Day Streak</Text>
+                </View>
               </View>
             </View>
 
             <View style={styles.card}>
-              {/* Step 1: Import */}
-              <Text style={styles.subtitle}>Step 1: Import Book</Text>
-              <Text style={styles.helperText}>Note: Please select one EPUB file at a time.</Text>
-              <View style={{ gap: theme.spacing.md }}>
-                <IOSButton title="Select File" onPress={pickDocument} theme={theme} />
-                {selectedFile && <IOSButton title="Reset / Clear" onPress={async () => {
-                  setSelectedFile(null);
-                  setBook(null);
-                  setRangeText("");
-                  setGeneratedPath(null);
-                  setConversionStatus("");
-                  setIsConverting(false);
-                  setProgress(0);
-                  // Clear State
-                  await AsyncStorage.removeItem(STORAGE_KEY);
-                }} variant="destructive" theme={theme} />}
-              </View>
+              <Text style={styles.sectionHeader}>Step 1: Import Book</Text>
+
+              {!selectedFile ? (
+                <View style={{ alignItems: 'center', marginVertical: 20 }}>
+                  <Image
+                    source={require('./assets/Echo_Holding_Book.png')}
+                    style={{ width: 140, height: 140, marginBottom: 16 }}
+                    resizeMode="contain"
+                  />
+                  <Text style={{ ...theme.typography.title3, color: theme.colors.text.primary, textAlign: 'center', marginBottom: 4 }}>
+                    Echo is ready for a new story
+                  </Text>
+                  <Text style={{ ...theme.typography.body, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 24 }}>
+                    Tap below to import your EPUB
+                  </Text>
+                  <IOSButton title="Select File" icon="arrow.down.doc.fill" onPress={pickDocument} theme={theme} />
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.helperText}>Note: Please select one EPUB file at a time.</Text>
+                  <View style={{ gap: theme.spacing.md }}>
+                    <IOSButton title="Select File" icon="arrow.down.doc.fill" onPress={pickDocument} theme={theme} />
+                    <IOSButton title="Reset / Clear" icon="xmark.circle.fill" onPress={async () => {
+                      Haptics.heavy(); // Heavy for reset
+                      setSelectedFile(null);
+                      setBook(null);
+                      setRangeText("");
+                      setMascotAction('neutral');
+                      setGeneratedPath(null);
+                      setConversionStatus("");
+                      setIsConverting(false);
+                      setProgress(0);
+                      // Clear State
+                      await AsyncStorage.removeItem(STORAGE_KEY);
+                    }} variant="destructive" theme={theme} />
+                  </View>
+                </>
+              )}
 
               {parsing && <Text style={styles.status}>Parsing File...</Text>}
 
@@ -701,7 +777,26 @@ export default function App() {
                         placeholder="e.g. 1-5, 8"
                         placeholderTextColor={theme.colors.text.secondary}
                         value={rangeText}
-                        onChangeText={setRangeText}
+                        onChangeText={(text) => {
+                          Haptics.light();
+                          setRangeText(text);
+
+                          // Motion Logic: Typing -> Thinking
+                          setMascotAction('thinking');
+
+                          if (debounceTimer.current) clearTimeout(debounceTimer.current);
+                          debounceTimer.current = setTimeout(() => {
+                            // Validation simulation (if text has content)
+                            if (text.length > 0) {
+                              setMascotAction('happy');
+                              // After a brief happy moment, go back to neutral or stay happy?
+                              // Let's stay happy until blur or change? Or just happy for 2s then neutral.
+                              setTimeout(() => setMascotAction('neutral'), 2000);
+                            } else {
+                              setMascotAction('neutral');
+                            }
+                          }, 800);
+                        }}
                         keyboardType="numbers-and-punctuation"
                         accessibilityLabel="Chapter Range Input"
                         accessibilityHint="Enter chapter numbers or ranges to convert"
@@ -735,9 +830,9 @@ export default function App() {
                         </View>
                       ) : (
                         <View style={{ gap: 10 }}>
-                          <IOSButton title="Convert & Save" onPress={startConversion} theme={theme} />
+                          <IOSButton title="Convert & Save" icon="waveform.circle.fill" onPress={() => { Haptics.heavy(); startConversion(); }} theme={theme} />
                           {generatedPath && (
-                            <IOSButton title="Share / Export" onPress={shareAudiobook} variant="success" theme={theme} />
+                            <IOSButton title="Share / Export" icon="square.and.arrow.up" onPress={shareAudiobook} variant="success" theme={theme} />
                           )}
                         </View>
                       )}
@@ -800,6 +895,20 @@ export default function App() {
                     </TouchableOpacity>
                   )}
                 />
+                {/* Chapter Count Indicator */}
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginTop: 8,
+                  padding: 12,
+                  backgroundColor: theme.colors.text.warning + '26', // Light Olive with 15% opacity (approx)
+                  borderRadius: 8,
+                }}>
+                  <SymbolView name="checkmark.circle.fill" tintColor={theme.colors.text.tint} style={{ width: 20, height: 20, marginRight: 8 }} />
+                  <Text style={{ fontSize: 17, fontWeight: '600', color: theme.colors.text.tint }}>
+                    Will convert {book?.chapters.length || 0} chapters
+                  </Text>
+                </View>
                 <View style={{ marginTop: theme.spacing.md }}>
                   <IOSButton title="Close" onPress={() => setShowVoiceModal(false)} variant="secondary" theme={theme} />
                 </View>
@@ -848,19 +957,24 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     marginTop: 60, // 60pt top margin as per spec
   },
   streakBadge: {
-    backgroundColor: 'rgba(255, 149, 0, 0.15)', // systemOrange with low alpha
+    backgroundColor: theme.colors.text.warning, // Light Olive (#C7D36F)
     paddingHorizontal: 12,
     paddingVertical: 5,
-    borderRadius: 15,
+    borderRadius: 20, // Pill shape
     marginTop: theme.spacing.sm,
     alignSelf: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.text.warning
+    // borderWidth: 1, // Optional border
+    // borderColor: theme.colors.text.warning
   },
   streakText: {
-    color: theme.colors.text.warning,
+    color: '#3C3C43', // Dark text on light badge for contrast
     fontWeight: '600',
     fontSize: theme.typography.subheadline.fontSize
+  },
+  streakIcon: {
+    width: 16,
+    height: 16,
+    marginRight: 6
   },
 
   title: {
@@ -881,53 +995,38 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     backgroundColor: theme.colors.card,
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.lg,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowColor: theme.colors.shadow || '#000',
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
+    shadowRadius: 12,
     elevation: 3
   },
   helperText: {
     ...theme.typography.subheadline,
     color: theme.colors.text.secondary,
-    marginBottom: theme.spacing.md,
-    // fontStyle: 'italic' // REMOVED ITALIC
-  },
-  status: {
-    marginTop: theme.spacing.md,
-    // fontStyle: 'italic', // REMOVED ITALIC 
-    ...theme.typography.subheadline,
-    color: theme.colors.text.secondary
+    marginBottom: theme.spacing.sm
   },
   fileInfo: {
-    marginTop: theme.spacing.lg,
-    width: '100%'
-  },
-  fileName: {
-    ...theme.typography.caption1,
-    color: theme.colors.text.secondary,
-    marginBottom: theme.spacing.xs
+    marginTop: theme.spacing.md,
+    gap: theme.spacing.xs
   },
   bookInfo: {
-    marginBottom: 0
+    marginBottom: theme.spacing.md,
   },
   bookTitle: {
     ...theme.typography.title2,
-    marginBottom: theme.spacing.xxs
+    color: theme.colors.text.primary,
+    marginBottom: 4,
   },
   bookAuthor: {
     ...theme.typography.body,
     color: theme.colors.text.secondary,
-    marginBottom: theme.spacing.lg
   },
   sectionHeader: {
     ...theme.typography.title3,
     marginTop: theme.spacing.md,
     marginBottom: theme.spacing.xs,
-    color: theme.colors.text.primary,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-    paddingBottom: 5
+    color: theme.colors.text.primary
   },
   chapterList: {
     marginTop: theme.spacing.md,
@@ -946,7 +1045,7 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     ...theme.typography.body
   },
   input: {
-    backgroundColor: theme.colors.background, // systemGray6
+    backgroundColor: theme.colors.inputBackground || theme.colors.background, // Warm Cream
     padding: 12,
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing.md,
@@ -965,6 +1064,12 @@ const getStyles = (theme: typeof lightTheme) => StyleSheet.create({
     backgroundColor: theme.colors.background,
     padding: 5,
     borderRadius: theme.borderRadius.sm
+  },
+  status: {
+    marginTop: theme.spacing.sm,
+    ...theme.typography.body,
+    color: theme.colors.text.tint,
+    textAlign: 'center'
   },
   progressContainer: {
     marginTop: theme.spacing.md,
