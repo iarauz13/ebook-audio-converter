@@ -1,7 +1,7 @@
 # Technical Design Document: EPUB-to-Audiobook Mobile .+
 
 **Version**: 2.0 (Mobile-First Pivot)  
-**Date**: 2026-02-09  
+**Date**: 2026-02-11  
 **Status**: Proposal / MVP Planning  
 **Target Architecture**: Hybrid Mobile (React Native + Native Modules)
 
@@ -50,7 +50,7 @@ We are abandoning the "Python Web Wrapper" strategy. Evidence suggests it is eco
 | Stage | Action Items | Confidence | Status |
 | :--- | :--- | :--- | :--- |
 | **3.1 Infrastructure** | **Auth**: Implement Apple Sign-In (Required) + Firebase Auth. | 95% | *Future* |
-| | **Cloud Voices**: Integrate Azure Speech SDK / ElevenLabs for "Pro" high-quality streaming voices (online only). | 90% | *Future* |
+| | **Cloud Voices**: Integrate Edge TTS Neural voices via direct WebSocket client for "Pro" high-quality streaming voices (online only). | 100% | *Implemented (Phase 8)* |
 | **3.2 Payments** | **IAP**: Integrate RevenueCat for subscription handling ($7.99/mo). | 95% | *Future* |
 
 | **3.3 Mascot & Gamification** | **"Echo" the Fennec Fox**: \n- **Concept**: Interactive mascot (Duolingo-style) that reacts to user activity.\n- **Mechanics**: "Streak" tracking (days in a row).\n- **States**: Happy (listening), Sleepy (idle), Sad (broken streak), **Celebrating** (on tap).\n- **Interaction**: Tap to trigger celebration and heartwarming messages. | 100% | *Implemented* |
@@ -654,4 +654,361 @@ I'm 90% confident the issue is:
     You're not removing citations (despite planning to)
     You're not normalizing punctuation
 
+
 Implement the cleanTextForTTS() function above and test immediately.
+
+---
+
+## 7. Obstacle & Solution: Voice Quality Regression (Edge TTS)
+
+### The Obstacle
+Users returning from the terminal-based proof-of-concept noticed a significant drop in voice quality.
+*   **Previous (Python)**: Used "Microsoft Edge Neural" voices (Ava, Andrew) via `edge-tts`. These are emotional, high-fidelity, and cloud-generated.
+*   **Current (Mobile)**: Uses "Apple Native iOS" voices. While decent, they are often robotic (Compact) unless the user manually downloads "Enhanced" versions, which is impossible on the iOS Simulator and hidden on real devices.
+
+### The Solution: Cloud Voices Bridge (Phase 8) — ✅ Implemented
+To restore the beloved "Ava" and "Andrew" voices without paying expensive API fees (ElevenLabs/OpenAI), we implemented a **Direct Edge TTS Client** within the mobile app.
+
+**Architecture:**
+1.  **WebSocket Client**: A custom TypeScript module (`utils/edgeTTS.ts`) connects directly to Microsoft's `speech.platform.bing.com` WebSocket endpoint.
+2.  **Protocol**: It mimics the browser's "Read Aloud" protocol by sending SSML (Speech Synthesis Markup Language) and receiving binary MP3 chunks.
+3.  **Hybrid Voice Picker**:
+    *   **📱 Offline**: Apple Voices (Best for airplane mode).
+    *   **☁️ Cloud (HD)**: Microsoft Neural Voices (Best quality, requires WiFi).
+4.  **Benefits**:
+    *   **Free**: Uses the free public API meant for Edge browsers.
+    *   **Quality**: Restores the "Human-like" narration range.
+    *   **Consistency**: Matches the voices from the original Python MVP.
+
+### Implementation: DRM Authentication (`Sec-MS-GEC`)
+
+The Edge TTS WebSocket endpoint requires browser-level DRM headers. Our implementation reverse-engineers these from the Python `edge-tts` library:
+
+| Component | Implementation |
+| :--- | :--- |
+| **`Sec-MS-GEC` Token** | SHA-256 hash of `(rounded_ticks + TRUSTED_CLIENT_TOKEN)`. Timestamp is ticks since epoch, rounded down to nearest 5 minutes. |
+| **SHA-256** | Pure-JS implementation (no Node `crypto` dependency) for React Native compatibility. |
+| **`MUID` Cookie** | Random 32-character hex string sent as `Cookie: muid=<value>`. |
+| **`X-Timestamp`** | JavaScript-style date string (e.g., `Tue Feb 11 2026 13:25:00 GMT+0000`). |
+| **Binary Parsing** | 2-byte header length at offset 0 (`readUInt16BE(0)`), then header bytes, then audio body. |
+
+### Implementation: Voice List (8 Curated Voices)
+
+| Voice | Identifier | Gender |
+| :--- | :--- | :--- |
+| Ava (Neural) | `en-US-AvaNeural` | Female |
+| Andrew (Neural) | `en-US-AndrewNeural` | Male |
+| Emma (Neural) | `en-US-EmmaNeural` | Female |
+| Brian (Neural) | `en-US-BrianNeural` | Male |
+| Jenny (Neural) | `en-US-JennyNeural` | Female |
+| Guy (Neural) | `en-US-GuyNeural` | Male |
+| Sonia (Neural) | `en-GB-SoniaNeural` | Female |
+| Ryan (Neural) | `en-GB-RyanNeural` | Male |
+
+### Implementation: UI Integration
+
+*   **Voice Type Toggle**: Two-button toggle (Offline / Cloud HD) in "Step 3: Choose Narrator".
+*   **Dual Voice Modal**: Shows Apple voices when Offline is selected, Edge TTS Neural voices when Cloud is selected. Each voice has a "Test" button.
+*   **Cloud Playback**: `speakChapter()` branches on `voiceType`. Cloud voices synthesize via `synthesizeEdgeTTS()` → save MP3 → play via `expo-av` (`Audio.Sound`).
+*   **WiFi Warning**: ⚠️ indicator displayed when Cloud mode is active.
+*   **Loading State**: `ActivityIndicator` shown during cloud synthesis.
+*   **Audio Cleanup**: `stopCloudAudio()` helper ensures previous audio is always stopped/unloaded before starting new playback.
+
+### Key Files
+
+| File | Purpose |
+| :--- | :--- |
+| `utils/edgeTTS.ts` | WebSocket client, DRM auth, SSML, binary parsing, MP3 assembly |
+| `App.tsx` | Voice toggle UI, dual modal, `speakChapter` cloud branch |
+| `test_edge_tts_node.ts` | Standalone Node.js test script (validated ✅, 37KB MP3 output) |
+
+---
+
+## 8. Branding: App Icon ("Echo Reading")
+
+### Decision
+The app icon was updated to feature **Echo the Fennec Fox holding an open book** — a generated mascot illustration that captures the app's identity.
+
+### Implementation
+*   **Source**: AI-generated image (640×640), upscaled to **1024×1024** via `sips`.
+*   **Files Replaced**: `icon.png`, `splash-icon.png`, `adaptive-icon.png`, `favicon.png`.
+*   **Background Color**: Updated from `#ffffff` to **`#EEECDB`** (warm cream) in `app.json` to match Echo's illustration background.
+
+---
+
+## 9. Additional Resolved Issues
+
+*   [x] **Broken Template Literals in Conversion Logic**:
+    *   **Problem**: Several template literal strings in `App.tsx` (lines 716, 725, 731) had corrupted formatting — spaces inside `${}`, broken regex character classes (`/[^ a - z0 - 9] /` instead of `/[^a-z0-9]/`), and misaligned indentation.
+    *   **Solution**: Fixed all template literals, regex patterns, and indentation in the conversion flow.
+*   [x] **`expo-file-system` Import in `edgeTTS.ts`**:
+    *   **Problem**: `FileSystem.cacheDirectory` and `FileSystem.EncodingType` were not recognized by the modern `expo-file-system` API.
+    *   **Solution**: Changed import to `expo-file-system/legacy` which exposes the classic API surface.
+
+---
+
+## 10. Phase 9: iOS Home Screen Widget ("Echo Streak Widget")
+
+### Prerequisites
+
+> [!CAUTION]
+> **Paid Apple Developer Account ($99/year) required.** App Groups entitlement needs proper code signing and provisioning profiles. Use `__DEV__` fallback (AsyncStorage only, no widget sync) during development.
+
+> [!IMPORTANT]
+> **Core app must be stable first.** Citation-skipping, text cleaning, and core conversion flows should be solid before investing in a widget.
+
+### Goal
+A **functional** (not merely decorative) iOS home screen widget that drives daily engagement and provides **at-a-glance utility**. Users can see their streak, current book progress, and **resume listening** directly from the home screen.
+
+**Why build it?** Widgets increase stickiness (daily visual reminder), streak gamification drives retention (Duolingo proves this), and interactive resume reduces friction. Speechify/Audible don't have mascot-based widgets — this is a visible differentiator.
+
+---
+
+### Visual Design: All 3 Widget Sizes
+
+#### Small Widget (2×2) — Glanceable Motivation
+```
+┌─────────────────────────┐
+│  🔥 5                   │
+│  Day Streak             │
+│                         │
+│  📖 The Secret History  │
+│                 [Echo]  │
+└─────────────────────────┘
+```
+Tap: Opens app to current book.
+
+#### Medium Widget (4×2) — Functional Dashboard ⭐ Primary
+```
+┌──────────────────────────────────────────────┐
+│  🔥 5 Day Streak           │                │
+│  Currently Reading:        │  [Echo         │
+│  The Secret History        │   Reading]     │
+│  Chapter 3 of 12           │                │
+│  🎯 2h 34m listened        │  [▶ Resume]   │
+└──────────────────────────────────────────────┘
+```
+**▶ Resume**: Interactive button resumes playback directly (iOS 17+). Fallback: tap opens app (iOS 16).
+
+#### Large Widget (4×4) — Full Library (v1.1)
+```
+┌──────────────────────────────────────────────┐
+│  🔥 5 Day Streak              [Echo]        │
+│  Don't break it today!                      │
+│─────────────────────────────────────────────│
+│  📖 The Secret History    Ch. 3/12    [▶]   │
+│─────────────────────────────────────────────│
+│  📚 3 books completed • 12h 45m total       │
+│  Last finished: Atomic Habits (Feb 8)       │
+└──────────────────────────────────────────────┘
+```
+
+**Effort Estimate**: Small only ≈ 8h. All 3 sizes ≈ 12h (+50% work for 3× value).
+
+| Element | Style |
+| :--- | :--- |
+| **Background** | Earthy gradient: `#9EB23B` → `#C7D36F`, matching app palette. Dark mode: darker olive. |
+| **Streak Icon** | `flame.fill` SF Symbol in `#FCF9C6` (Cream) |
+| **Streak Number** | Large bold white text |
+| **Book Title** | White text, truncated to ~25 chars |
+| **Chapter Progress** | Smaller cream text (e.g., "Chapter 3 of 12") |
+| **Resume Button** | `play.circle.fill` SF Symbol, 44pt (iOS 17+ interactive) |
+| **Echo Image** | Context-dependent PNG based on `echoState` (see Edge Cases) |
+
+---
+
+### Edge Case Handling
+
+| State | Echo Pose | Widget Content |
+| :--- | :--- | :--- |
+| **New user (no data)** | Waving | "Welcome to Audiobooks Mobile" / "Tap to import your first book" |
+| **Active streak, listened today** | Happy/Reading | "🔥 5 Day Streak" + book + chapter progress |
+| **Active streak, NOT listened today** | Worried | "🔥 5 Day Streak" + "⚠️ Listen today to maintain streak!" |
+| **Streak broken (0 days)** | Sad/Sleeping | "Your streak reset. Start a new one!" (NOT "0 Day Streak") |
+| **Book finished, no active book** | Celebrating | "You finished [Book]! 🎉" + "Import another?" |
+| **Data sync failed** | Neutral | Show cached data + subtle ⚠️ indicator |
+
+### Architecture Overview
+
+```mermaid
+graph LR
+    A[React Native App] -->|Writes to| B[App Groups UserDefaults]
+    B -->|Reads from| C[WidgetKit SwiftUI Widget]
+    A -->|Triggers| D[WidgetCenter.reloadTimelines]
+```
+
+iOS widgets are **native-only** — they cannot run JavaScript or React Native code. The widget must be built in **SwiftUI** and communicates with the React Native app via shared **App Groups** (`UserDefaults`).
+
+### Data Contract (App → Widget)
+
+The React Native app writes this JSON to `UserDefaults(suiteName: "group.com.audiobooks.shared")`:
+
+```json
+{
+  "currentStreak": 5,
+  "lastLoginDate": "2026-02-11",
+  "hasListenedToday": true,
+  "lastBookTitle": "The Secret History",
+  "lastBookAuthor": "Donna Tartt",
+  "currentChapter": 3,
+  "totalChapters": 12,
+  "totalListeningMinutes": 154,
+  "booksCompleted": 3,
+  "echoState": "happy"
+}
+```
+
+### Implementation Roadmap
+
+| Step | Task | Solution | Status |
+| :--- | :--- | :--- | :--- |
+| **9.0** | **Prerequisites check** | Verify Apple Developer account. Set up `__DEV__` fallback (AsyncStorage only, no widget sync). | ⬜ Blocked |
+| **9.1** | **Install `@bacons/apple-targets`** | Expo Config Plugin that generates native widget targets without ejecting. Run `npx create-target widget`. Pin version. | ✅ Done |
+| **9.2** | **Configure App Groups** | Add `com.apple.security.application-groups` (`group.com.audiobooks.shared`) to both main app and widget in `app.json`. | ✅ Done |
+| **9.3** | **Create `WidgetDataBridge` module** | JS bridge at `utils/widgetBridge.ts`: `syncWidgetData()`, `buildWidgetData()`, `reloadWidget()`. Gracefully no-ops in Expo Go. | ✅ Done |
+| **9.4** | **Update `App.tsx` to sync data** | Call `syncWidgetData(buildWidgetData(...))` in `checkStreak()` and `saveState()`. Uses `book?.title` for live book data. | ✅ Done |
+| **9.5** | **Export Echo assets** | Generated 4 new poses (`Echo_Waving.png`, `Echo_Worried.png`, `Echo_Celebrating.png`, `Echo_Sad.png`) + existing `Echo_Holding_Book.png`. Copied to `assets/`. | ✅ Done |
+| **9.6** | **Build Small Widget (SwiftUI)** | `SmallStreakView` in `targets/widget/widgets.swift`: streak count + book title + Echo mascot. | ✅ Done |
+| **9.7** | **Build Medium Widget (SwiftUI)** | `MediumStreakView`: streak + chapter progress + listening time + Echo + Resume button (visual only — see 9.12 for interactive). | ✅ Done |
+| **9.8** | **Build Large Widget (SwiftUI)** | `LargeStreakView`: full library stats + book list + controls. | ⬜ Deferred v1.1 |
+| **9.9** | **Style with Earthy Palette** | Gradient `#9EB23B` → `#C7D36F`, cream text, `flame.fill` SF Symbol. Colors defined as SwiftUI extensions. | ✅ Done |
+| **9.10** | **Deep Link on Tap** | `widgetURL(URL(string: "audiobooks://resume"))` configured in widget views. | ✅ Done |
+| **9.11** | **Timeline Strategy** | `.after(Date().addingTimeInterval(900))` (~15 min). Force-refresh on foreground via `reloadWidget()`. | ✅ Done |
+| **9.12** | **Interactive Resume (iOS 17+)** | `ResumePlaybackIntent: AppIntent` resumes audio without opening app. Requires `AudioManager` native singleton. | ⬜ Deferred v1.1 |
+| **9.13** | **Prebuild & Test** | Run `npx expo prebuild -p ios --clean`, open in Xcode, test on physical device. | ⬜ Blocked on 9.0 |
+
+### Risk & Mitigation
+
+| Risk | Impact | Mitigation |
+| :--- | :--- | :--- |
+| **Apple Developer Account required** | Can't test App Groups without it | Required for any real-device deployment anyway |
+| **`@bacons/apple-targets` is experimental** | May break with Expo SDK updates | Pin version; fallback to manual Xcode target |
+| **Widget data can be stale** | Up to 15-60 min delay | Aggressive timeline + force-refresh on foreground |
+| **Simulator limitations** | Widgets may not render | Test on physical device; use Xcode SwiftUI preview |
+| **AsyncStorage ≠ UserDefaults** | JS and native use different stores | `WidgetDataBridge` module bridges the gap |
+| **Echo images in RN bundle** | SwiftUI can't access RN assets | Export PNGs to `widget/Assets.xcassets` separately |
+| **Interactive widgets require iOS 17+** | Not all users have iOS 17 | Graceful fallback: tap opens app instead |
+
+### Testing Checklist
+
+- [ ] Widget displays correctly on iPhone SE (small screen)
+- [ ] Widget displays correctly on iPhone 15 Pro Max (large screen)
+- [ ] Widget updates when app is foregrounded
+- [ ] Widget updates when app is backgrounded (within timeline budget)
+- [ ] Widget survives iOS restart
+- [ ] Widget survives app crash (shows cached data)
+- [ ] Widget works with VoiceOver (accessibility)
+- [ ] Widget respects Light/Dark mode
+- [ ] Deep link works (tapping widget opens app)
+- [ ] All 3 sizes render correctly
+- [ ] Edge case: New user (no data) shows welcome state
+- [ ] Edge case: Broken streak shows encouragement (not "0")
+- [ ] Edge case: Finished book shows celebration
+
+---
+
+### Future Enhancements (v1.1)
+
+*   **Notification Badge**: Set badge count to 1 when streak is at risk. Clear on listen.
+*   **Analytics**: Track widget adoption rate, tap rate, and retention correlation.
+*   **Android Widget**: Separate implementation (Jetpack Compose). iOS only for MVP.
+*   **App Store Screenshots**: Widget previews in all 3 sizes × Light/Dark mode.
+
+---
+
+### Remaining Steps — Detailed Instructions
+
+#### ⬜ Step 9.0: Apple Developer Account Prerequisites
+
+**Why blocked:** App Groups entitlement requires proper code signing. Without a paid Apple Developer account ($99/year), `npx expo prebuild` will generate the Xcode project but you won't be able to test the widget on a physical device.
+
+**What to do:**
+1. Enroll at [developer.apple.com/enroll](https://developer.apple.com/enroll)
+2. Once approved, get your **Apple Team ID** from Xcode → Signing & Capabilities
+3. Add to `app.json`:
+   ```json
+   "ios": {
+     "appleTeamId": "YOUR_TEAM_ID_HERE"
+   }
+   ```
+4. Enable "App Groups" capability in Xcode for both the main app target and the widget target
+5. Verify `group.com.audiobooks.shared` is listed in both targets' entitlements
+
+---
+
+#### ⬜ Step 9.8: Large Widget (Deferred to v1.1)
+
+**What it does:** A 4×4 widget showing full library stats — total books, total listening time, currently reading, and playback controls.
+
+**What to do when implementing:**
+1. Add `LargeStreakView` struct to `targets/widget/widgets.swift`
+2. Layout: streak header + currently reading row (with ▶ button) + library stats footer
+3. Add `.systemLarge` to the `supportedFamilies` array in the `widget` struct
+4. Use the same `StreakData` model (already includes `booksCompleted`, `totalListeningMinutes`)
+5. Consider adding a `recentBooks: [BookSummary]` array to the data contract for multi-book display
+
+---
+
+#### ⬜ Step 9.12: Interactive Resume (iOS 17+ AppIntent)
+
+**What it does:** A ▶ Resume button on the Medium/Large widget that resumes audiobook playback **without opening the app**.
+
+**What to do when implementing:**
+1. Create `targets/widget/ResumePlaybackIntent.swift`:
+   ```swift
+   import AppIntents
+   
+   struct ResumePlaybackIntent: AppIntent {
+       static var title: LocalizedStringResource = "Resume Audiobook"
+       static var openAppWhenRun = false
+       
+       func perform() async throws -> some IntentResult {
+           // Trigger AudioManager to resume playback
+           // This requires a shared AudioManager singleton accessible from the widget extension
+           return .result()
+       }
+   }
+   ```
+2. Create a native `AudioManager` singleton that both the main app and widget extension can access
+3. Replace the visual-only Resume button in `MediumStreakView` with a `Button(intent: ResumePlaybackIntent())` using the `@available(iOS 17.0, *)` guard
+4. For iOS 16 fallback: keep the current `widgetURL` tap behavior (opens app)
+
+**Challenge:** The widget extension runs in a separate process. Audio playback requires the main app process. The `AppIntent` may need to launch the app in the background. This is the hardest remaining step.
+
+---
+
+#### ⬜ Step 9.13: Prebuild & Test on Device
+
+**What to do:**
+1. Run: `npx expo prebuild -p ios --clean`
+2. Open in Xcode: `xed ios`
+3. In Xcode:
+   - Select the widget target → Signing & Capabilities → add your Team ID
+   - Verify App Groups capability shows `group.com.audiobooks.shared`
+   - Copy Echo pose PNGs from `assets/` into the widget's `Assets.xcassets`:
+     - `Echo_Holding_Book.png` → rename to `EchoReading`
+     - `Echo_Waving.png` → rename to `EchoWaving`
+     - `Echo_Worried.png` → rename to `EchoWorried`
+     - `Echo_Celebrating.png` → rename to `EchoCelebrating`
+     - `Echo_Sad.png` → rename to `EchoSad`
+4. Build & run on physical iPhone
+5. Long-press home screen → tap "+" → search "Echo Streak" → add widget
+6. Walk through Testing Checklist above
+
+---
+
+### File Plan (Actual)
+
+| File | Type | Purpose |
+| :--- | :--- | :--- |
+| `targets/widget/widgets.swift` | ✅ Created | SwiftUI widget: timeline provider, entry model, Small + Medium views, color palette, edge cases |
+| `targets/widget/index.swift` | ✅ Created | Widget bundle entry point — exports `widget()` |
+| `targets/widget/expo-target.config.js` | ✅ Created | Widget target config with App Groups entitlement |
+| `utils/widgetBridge.ts` | ✅ Created | JS bridge: `syncWidgetData()`, `buildWidgetData()`, `reloadWidget()` — no-ops in Expo Go |
+| `assets/Echo_Waving.png` | ✅ Created | Echo waving pose (new user) |
+| `assets/Echo_Worried.png` | ✅ Created | Echo worried pose (streak at risk) |
+| `assets/Echo_Celebrating.png` | ✅ Created | Echo celebrating pose (finished book) |
+| `assets/Echo_Sad.png` | ✅ Created | Echo sad/sleeping pose (broken streak) |
+| `app.json` | ✅ Modified | Added iOS `bundleIdentifier`, App Groups entitlement |
+| `App.tsx` | ✅ Modified | Widget sync in `checkStreak()` + `saveState()` via `widgetBridge` |
+| `targets/widget/ResumePlaybackIntent.swift` | ⬜ Future | `AppIntent` for interactive resume (iOS 17+, v1.1) |

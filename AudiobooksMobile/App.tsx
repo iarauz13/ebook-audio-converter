@@ -5,9 +5,11 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { parseEpub, Book } from './utils/epubParser';
 import * as Speech from 'expo-speech';
 import { intelligentChapterFilter } from './utils/chapterFilter';
-import { Video, ResizeMode } from 'expo-av';
+import { Video, ResizeMode, Audio } from 'expo-av';
 import { Haptics } from './utils/haptics';
 import { cleanTextForTTS } from './utils/textCleaner';
+import { EDGE_VOICES, synthesizeEdgeTTS } from './utils/edgeTTS';
+import { syncWidgetData, buildWidgetData, reloadWidget } from './utils/widgetBridge';
 
 import { SymbolView, SymbolViewProps } from 'expo-symbols';
 import { Platform, UIManager, LayoutAnimation } from 'react-native';
@@ -184,6 +186,12 @@ export default function App() {
   const [selectedVoice, setSelectedVoice] = useState<Speech.Voice | null>(null);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
 
+  // Cloud Voice State (Edge TTS)
+  const [voiceType, setVoiceType] = useState<'offline' | 'cloud'>('offline');
+  const [selectedEdgeVoice, setSelectedEdgeVoice] = useState(EDGE_VOICES[0]);
+  const cloudAudioRef = useRef<Audio.Sound | null>(null);
+  const [isCloudSynthesizing, setIsCloudSynthesizing] = useState(false);
+
   // Persistence State
   const [isRestoring, setIsRestoring] = useState(true);
 
@@ -235,6 +243,11 @@ export default function App() {
         const english = available
           .filter(v => v.language.startsWith('en') && !noveltyVoices.has(v.name))
           .sort((a, b) => a.name.localeCompare(b.name));
+
+        // DEBUG: Log all voices to find "Enhanced" or "Premium" identifiers
+        console.log("=== AVAILABLE VOICES DEBUG ===");
+        english.forEach(v => console.log(`${v.name} (${v.identifier}) - Quality: ${v.quality}`));
+        console.log("=== END VOICE DEBUG ===");
 
         setVoices(english);
 
@@ -346,6 +359,13 @@ export default function App() {
       setStreak(data.currentStreak);
       await AsyncStorage.setItem(STREAK_KEY, JSON.stringify(data));
 
+      // Sync to widget
+      syncWidgetData(buildWidgetData({
+        streak: data.currentStreak,
+        lastLoginDate: today,
+        bookTitle: book?.title || undefined,
+      }));
+
     } catch (e) {
       console.error("Streak check failed", e);
     }
@@ -358,6 +378,19 @@ export default function App() {
       const prevState = current ? JSON.parse(current) : {};
       const newState = { ...prevState, ...updates };
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+
+      // Sync book data to widget
+      if (updates.bookTitle || updates.lastChapterIndex) {
+        const streakJson = await AsyncStorage.getItem(STREAK_KEY);
+        const streakData = streakJson ? JSON.parse(streakJson) : { currentStreak: 0, lastLoginDate: '' };
+        syncWidgetData(buildWidgetData({
+          streak: streakData.currentStreak,
+          lastLoginDate: streakData.lastLoginDate || '',
+          bookTitle: newState.bookTitle || undefined,
+          currentChapter: (newState.lastChapterIndex || 0) + 1,
+          totalChapters: newState.totalChapters || 0,
+        }));
+      }
     } catch (e) {
       console.error("Failed to save state", e);
     }
@@ -477,49 +510,85 @@ export default function App() {
     }
   };
 
-  const speakChapter = (chapter: any, index: number) => {
+  const stopCloudAudio = async () => {
+    if (cloudAudioRef.current) {
+      try {
+        await cloudAudioRef.current.stopAsync();
+        await cloudAudioRef.current.unloadAsync();
+      } catch (e) { /* ignore */ }
+      cloudAudioRef.current = null;
+    }
+  };
+
+  const speakChapter = async (chapter: any, index: number) => {
     // Save progress
     saveState({ lastChapterIndex: index });
-
-    // Speaking activity -> Update mascot to happy if not already (simple interaction)
-
 
     // If clicking the same chapter, stop it
     if (playingChapter === index) {
       Speech.stop();
+      await stopCloudAudio();
       setPlayingChapter(null);
       setMascotAction('neutral');
       return;
     }
 
-    // Stop (previous) and play new
+    // Stop previous and play new
     Speech.stop();
+    await stopCloudAudio();
     setPlayingChapter(index);
     setMascotAction('reading');
 
     const rawText = chapter.content || "No content found in this chapter.";
     const cleanedText = cleanTextForTTS(rawText);
 
-    // DEBUG: Log what's being sent to TTS (as requested)
-    console.log("=== RAW TEXT SENT TO TTS ===");
-    console.log(rawText.substring(0, 300));
     console.log("=== CLEANED TEXT ===");
     console.log(cleanedText.substring(0, 300));
-    console.log("=== END ===");
+    console.log(`=== Voice Type: ${voiceType} ===`);
 
-    Speech.speak(cleanedText, {
-      rate: 0.85,
-      // voice: selectedVoice?.identifier, // Use selected voice
-      // Enhanced voices are often preferred
-      onDone: () => {
+    if (voiceType === 'cloud') {
+      // ── Cloud Voice (Edge TTS) ──
+      setIsCloudSynthesizing(true);
+      try {
+        const mp3Uri = await synthesizeEdgeTTS(cleanedText, selectedEdgeVoice.identifier);
+        setIsCloudSynthesizing(false);
+
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: mp3Uri },
+          { shouldPlay: true }
+        );
+        cloudAudioRef.current = sound;
+
+        sound.setOnPlaybackStatusUpdate((status: any) => {
+          if (status.didJustFinish) {
+            setPlayingChapter(null);
+            setMascotAction('neutral');
+            sound.unloadAsync();
+            cloudAudioRef.current = null;
+          }
+        });
+      } catch (e) {
+        console.error('[EdgeTTS] Playback error:', e);
+        setIsCloudSynthesizing(false);
         setPlayingChapter(null);
         setMascotAction('neutral');
-      },
-      onStopped: () => {
-        setPlayingChapter(null);
-        setMascotAction('neutral');
-      },
-    });
+        Alert.alert('Cloud Voice Error', 'Failed to synthesize audio. Check your WiFi connection.');
+      }
+    } else {
+      // ── Offline Voice (Apple TTS) ──
+      Speech.speak(cleanedText, {
+        rate: 0.85,
+        voice: selectedVoice?.identifier,
+        onDone: () => {
+          setPlayingChapter(null);
+          setMascotAction('neutral');
+        },
+        onStopped: () => {
+          setPlayingChapter(null);
+          setMascotAction('neutral');
+        },
+      });
+    }
   };
 
   const setMascotAction = (action: 'reading' | 'neutral' | 'celebrate' | 'sleeping_transition' | 'sleeping_loop' | 'thinking' | 'happy') => {
@@ -553,12 +622,41 @@ export default function App() {
     }
   };
 
-  const previewVoice = (voice: Speech.Voice) => {
+  const previewVoice = async (voice: Speech.Voice) => {
     Speech.stop();
+    await stopCloudAudio();
     Speech.speak(`Hello, I am ${voice.name}. This is a preview.`, {
       voice: voice.identifier,
       rate: 0.85
     });
+  };
+
+  const previewEdgeVoice = async (voice: typeof EDGE_VOICES[0]) => {
+    Speech.stop();
+    await stopCloudAudio();
+    setIsCloudSynthesizing(true);
+    try {
+      const mp3Uri = await synthesizeEdgeTTS(
+        `Hello, I am ${voice.name}. This is a preview of the cloud voice.`,
+        voice.identifier
+      );
+      setIsCloudSynthesizing(false);
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: mp3Uri },
+        { shouldPlay: true }
+      );
+      cloudAudioRef.current = sound;
+      sound.setOnPlaybackStatusUpdate((status: any) => {
+        if (status.didJustFinish) {
+          sound.unloadAsync();
+          cloudAudioRef.current = null;
+        }
+      });
+    } catch (e) {
+      setIsCloudSynthesizing(false);
+      console.error('[EdgeTTS] Preview error:', e);
+      Alert.alert('Preview Error', 'Could not preview cloud voice. Check WiFi.');
+    }
   };
 
   const handleMascotTap = () => {
@@ -644,7 +742,7 @@ export default function App() {
 
       // Save dummy chapter text logic
       const cleanedChapterContent = cleanTextForTTS(chapter.content || "");
-      await FileSystem.writeAsStringAsync(`${storagePath}/Chapter ${chapterIdx + 1} - ${chapter.title.replace(/[^a-z0-9 ]/gi, '')}.txt`, cleanedChapterContent);
+      await FileSystem.writeAsStringAsync(`${storagePath}/Chapter ${chapterIdx + 1} - ${chapter.title.replace(/[^a-z0-9]/gi, '')}.txt`, cleanedChapterContent);
 
       setProgress((i + 1) / selectedIndices.length);
     }
@@ -818,12 +916,58 @@ export default function App() {
 
                       {/* Step 3: Voice Selection */}
                       <Text style={styles.sectionHeader}>Step 3: Choose Narrator</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.spacing.md, backgroundColor: theme.colors.background, padding: theme.spacing.md, borderRadius: theme.borderRadius.md }}>
-                        <Text numberOfLines={1} style={{ flex: 1, marginRight: theme.spacing.md, ...theme.typography.body }}>{selectedVoice ? selectedVoice.name : "Default"}</Text>
-                        <IOSButton title="Change" onPress={() => setShowVoiceModal(true)} variant="secondary" style={{ paddingVertical: 6, paddingHorizontal: 12 }} textStyle={{ fontSize: 15 }} theme={theme} />
+                      {/* Voice Type Toggle */}
+                      <View style={{ flexDirection: 'row', marginBottom: theme.spacing.sm, gap: 8 }}>
+                        <TouchableOpacity
+                          onPress={() => setVoiceType('offline')}
+                          style={{
+                            flex: 1, paddingVertical: 10, borderRadius: theme.borderRadius.md,
+                            backgroundColor: voiceType === 'offline' ? theme.colors.text.tint : theme.colors.inputBackground,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontWeight: '600', fontSize: 14, color: voiceType === 'offline' ? '#fff' : theme.colors.text.primary }}>📱 Offline</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setVoiceType('cloud')}
+                          style={{
+                            flex: 1, paddingVertical: 10, borderRadius: theme.borderRadius.md,
+                            backgroundColor: voiceType === 'cloud' ? theme.colors.text.tint : theme.colors.inputBackground,
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontWeight: '600', fontSize: 14, color: voiceType === 'cloud' ? '#fff' : theme.colors.text.primary }}>☁️ Cloud (HD)</Text>
+                        </TouchableOpacity>
                       </View>
-                      <Text style={styles.helperText}>Tip: Download "Enhanced" voices in iOS Settings &gt; Accessibility &gt; Spoken Content.</Text>
-                      {selectedVoice && <View style={{ marginBottom: 15 }}><IOSButton title={`Preview ${selectedVoice.name}`} onPress={() => previewVoice(selectedVoice)} variant="outline" theme={theme} /></View>}
+
+                      {voiceType === 'offline' ? (
+                        <>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.spacing.md, backgroundColor: theme.colors.background, padding: theme.spacing.md, borderRadius: theme.borderRadius.md }}>
+                            <Text numberOfLines={1} style={{ flex: 1, marginRight: theme.spacing.md, ...theme.typography.body }}>{selectedVoice ? selectedVoice.name : "Default"}</Text>
+                            <IOSButton title="Change" onPress={() => setShowVoiceModal(true)} variant="secondary" style={{ paddingVertical: 6, paddingHorizontal: 12 }} textStyle={{ fontSize: 15 }} theme={theme} />
+                          </View>
+                          <Text style={styles.helperText}>Tip: Download "Enhanced" voices in iOS Settings &gt; Accessibility &gt; Spoken Content.</Text>
+                          {selectedVoice && <View style={{ marginBottom: 15 }}><IOSButton title={`Preview ${selectedVoice.name}`} onPress={() => previewVoice(selectedVoice)} variant="outline" theme={theme} /></View>}
+                        </>
+                      ) : (
+                        <>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.spacing.md, backgroundColor: theme.colors.background, padding: theme.spacing.md, borderRadius: theme.borderRadius.md }}>
+                            <Text numberOfLines={1} style={{ flex: 1, marginRight: theme.spacing.md, ...theme.typography.body }}>{selectedEdgeVoice.name}</Text>
+                            <IOSButton title="Change" onPress={() => setShowVoiceModal(true)} variant="secondary" style={{ paddingVertical: 6, paddingHorizontal: 12 }} textStyle={{ fontSize: 15 }} theme={theme} />
+                          </View>
+                          <Text style={[styles.helperText, { color: theme.colors.text.warning }]}>⚠️ WiFi required for cloud voices.</Text>
+                          {isCloudSynthesizing && <ActivityIndicator style={{ marginVertical: 8 }} />}
+                          <View style={{ marginBottom: 15 }}>
+                            <IOSButton
+                              title={`Preview ${selectedEdgeVoice.name}`}
+                              onPress={() => previewEdgeVoice(selectedEdgeVoice)}
+                              variant="outline"
+                              disabled={isCloudSynthesizing}
+                              theme={theme}
+                            />
+                          </View>
+                        </>
+                      )}
 
                       {/* Step 4: Storage & Convert */}
                       <Text style={styles.sectionHeader}>Step 4: Convert</Text>
@@ -885,34 +1029,62 @@ export default function App() {
           >
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Select Voice</Text>
-                <FlatList
-                  data={voices}
-                  keyExtractor={(item) => item.identifier}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={[styles.voiceItem, selectedVoice?.identifier === item.identifier && styles.selectedVoiceItem]}
-                      onPress={() => {
-                        setSelectedVoice(item);
-                        setShowVoiceModal(false);
-                        // Optional: Speak name on select
-                        // previewVoice(item);
-                      }}
-                    >
-                      <Text style={styles.voiceName}>{item.name}</Text>
-                      <TouchableOpacity onPress={() => previewVoice(item)} style={{ padding: 5 }}>
-                        <Text style={{ color: '#007AFF' }}>Test</Text>
+                <Text style={styles.modalTitle}>
+                  {voiceType === 'cloud' ? '☁️ Cloud Voices' : '📱 Offline Voices'}
+                </Text>
+
+                {voiceType === 'cloud' ? (
+                  /* ── Cloud Voices List ── */
+                  <FlatList
+                    data={EDGE_VOICES}
+                    keyExtractor={(item) => item.identifier}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={[styles.voiceItem, selectedEdgeVoice?.identifier === item.identifier && styles.selectedVoiceItem]}
+                        onPress={() => {
+                          setSelectedEdgeVoice(item);
+                          setShowVoiceModal(false);
+                        }}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.voiceName}>{item.name}</Text>
+                          <Text style={{ fontSize: 12, color: 'rgba(0,0,0,0.4)' }}>{item.language} · Neural</Text>
+                        </View>
+                        <TouchableOpacity onPress={() => previewEdgeVoice(item)} style={{ padding: 5 }}>
+                          <Text style={{ color: '#007AFF' }}>{isCloudSynthesizing ? '...' : 'Test'}</Text>
+                        </TouchableOpacity>
                       </TouchableOpacity>
-                    </TouchableOpacity>
-                  )}
-                />
+                    )}
+                  />
+                ) : (
+                  /* ── Offline Voices List ── */
+                  <FlatList
+                    data={voices}
+                    keyExtractor={(item) => item.identifier}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={[styles.voiceItem, selectedVoice?.identifier === item.identifier && styles.selectedVoiceItem]}
+                        onPress={() => {
+                          setSelectedVoice(item);
+                          setShowVoiceModal(false);
+                        }}
+                      >
+                        <Text style={styles.voiceName}>{item.name}</Text>
+                        <TouchableOpacity onPress={() => previewVoice(item)} style={{ padding: 5 }}>
+                          <Text style={{ color: '#007AFF' }}>Test</Text>
+                        </TouchableOpacity>
+                      </TouchableOpacity>
+                    )}
+                  />
+                )}
+
                 {/* Chapter Count Indicator */}
                 <View style={{
                   flexDirection: 'row',
                   alignItems: 'center',
                   marginTop: 8,
                   padding: 12,
-                  backgroundColor: theme.colors.text.warning + '26', // Light Olive with 15% opacity (approx)
+                  backgroundColor: theme.colors.text.warning + '26',
                   borderRadius: 8,
                 }}>
                   <SymbolView name="checkmark.circle.fill" tintColor={theme.colors.text.tint} style={{ width: 20, height: 20, marginRight: 8 }} />

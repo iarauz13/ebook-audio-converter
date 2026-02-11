@@ -9,7 +9,9 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@bacons/apple-targets": "^4.0.2",
     "@react-native-async-storage/async-storage": "^2.2.0",
+    "buffer": "^6.0.3",
     "expo": "~54.0.33",
     "expo-av": "~16.0.8",
     "expo-document-picker": "~14.0.8",
@@ -22,13 +24,20 @@
     "expo-symbols": "~1.0.8",
     "fast-xml-parser": "^5.3.5",
     "jszip": "^3.10.1",
+    "node-libs-react-native": "^1.2.1",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-safe-area-context": "~5.6.0"
+    "react-native-fs": "^2.20.0",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-uuid": "^2.0.3"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
-    "typescript": "~5.9.2"
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "~5.9.2",
+    "uuid": "^13.0.0",
+    "ws": "^8.19.0"
   },
   "private": true
 }
