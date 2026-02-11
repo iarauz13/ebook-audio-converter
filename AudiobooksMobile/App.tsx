@@ -1,17 +1,63 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, Button, Alert, ScrollView, TextInput, Modal, TouchableOpacity, FlatList, ActivityIndicator, Image } from 'react-native';
+import { StyleSheet, Text, View, Button, Alert, ScrollView, TextInput, Modal, TouchableOpacity, FlatList, ActivityIndicator, Image, Animated, Easing } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useState, useEffect, useRef } from 'react';
 import { parseEpub, Book } from './utils/epubParser';
 import * as Speech from 'expo-speech';
+import { intelligentChapterFilter } from './utils/chapterFilter';
+import { Video, ResizeMode } from 'expo-av';
+
+const STORAGE_KEY = 'audiobooks_app_state_v1';
+const STREAK_KEY = 'audiobooks_streak_v1';
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 import { LinearGradient } from 'expo-linear-gradient';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const STORAGE_KEY = 'audiobooks_app_state_v1';
-const STREAK_KEY = 'audiobooks_streak_v1';
+
+// Design System Constants
+// Design System Constants (iOS Redesign Phase 1)
+const theme = {
+  colors: {
+    background: '#F2F2F7', // systemGray6 for overall background
+    card: '#FFFFFF',       // systemBackground
+    text: {
+      primary: '#000000',      // label
+      secondary: '#3C3C4399',  // secondaryLabel (60% opacity)
+      tertiary: '#3C3C434D',   // tertiaryLabel (30% opacity)
+      tint: '#007AFF',         // systemBlue
+      success: '#34C759',      // systemGreen
+      warning: '#FF9500',      // systemOrange
+      destructive: '#FF3B30',  // systemRed
+    },
+    border: '#C6C6C8', // separator
+  },
+  typography: {
+    largeTitle: { fontSize: 34, fontWeight: '700' as '700', color: '#000000' },
+    title1: { fontSize: 28, fontWeight: '700' as '700', color: '#000000' },
+    title2: { fontSize: 22, fontWeight: '700' as '700', color: '#000000' },
+    title3: { fontSize: 20, fontWeight: '600' as '600', color: '#000000' },
+    body: { fontSize: 17, fontWeight: '400' as '400', color: '#000000' },
+    subheadline: { fontSize: 15, fontWeight: '400' as '400', color: '#3C3C4399' },
+    caption1: { fontSize: 12, fontWeight: '400' as '400', color: '#3C3C4399' },
+  },
+  spacing: {
+    xxs: 4,
+    xs: 8,
+    sm: 16,
+    md: 24,
+    lg: 32,
+    xl: 40,
+  },
+  borderRadius: {
+    sm: 8,
+    md: 12,
+    lg: 16,
+    round: 999,
+  }
+};
 
 export default function App() {
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
@@ -34,8 +80,38 @@ export default function App() {
 
   // Gamification / Mascot
   const [streak, setStreak] = useState(0);
-  const [mascotMood, setMascotMood] = useState<'happy' | 'sleepy' | 'excited'>('sleepy');
-  const [mascotMessage, setMascotMessage] = useState("Zzz...");
+
+  // Video Refs & State
+  const videoRef = useRef<Video>(null);
+  const checkActivityTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [videoSource, setVideoSource] = useState(require('./assets/Echo_Neutral_2.mp4'));
+  const [isLooping, setIsLooping] = useState(true);
+
+
+
+
+
+  // Activity Monitor
+  const resetInactivityTimer = () => {
+    if (checkActivityTimeout.current) clearTimeout(checkActivityTimeout.current);
+
+    // If we were sleeping, wake up!
+    if (videoSource === require('./assets/Echo_Sleeping_Inactive.mp4')) {
+      setVideoSource(require('./assets/Echo_Neutral_2.mp4'));
+      setIsLooping(true);
+    }
+
+    checkActivityTimeout.current = setTimeout(() => {
+      // Go to sleep
+      setVideoSource(require('./assets/Echo_Sleeping_Inactive.mp4'));
+      setIsLooping(true);
+    }, INACTIVITY_TIMEOUT_MS);
+  };
+
+  useEffect(() => {
+    resetInactivityTimer();
+    return () => { if (checkActivityTimeout.current) clearTimeout(checkActivityTimeout.current); };
+  }, []);
 
   useEffect(() => {
     const initialize = async () => {
@@ -144,8 +220,6 @@ export default function App() {
       if (data.lastLoginDate === today) {
         // Already logged in today
         setStreak(data.currentStreak);
-        setMascotMood('happy');
-        setMascotMessage("Back for more? Awesome!");
         return;
       }
 
@@ -156,17 +230,8 @@ export default function App() {
       if (data.lastLoginDate === yesterdayStr) {
         // Consecutive day
         data.currentStreak += 1;
-        setMascotMood('excited');
-        setMascotMessage(`Wow! ${data.currentStreak} day streak! 🔥`);
       } else {
         // Streak broken or new user
-        if (data.currentStreak > 0) {
-          setMascotMood('sleepy'); // Was sad/sleepy because broken
-          setMascotMessage("Oh no, streak broken... Let's start again!");
-        } else {
-          setMascotMood('happy');
-          setMascotMessage("Welcome! Let's read.");
-        }
         data.currentStreak = 1;
       }
 
@@ -267,6 +332,19 @@ export default function App() {
             };
           } else {
             parsedBook = await parseEpub(permanentUri);
+
+            // Apply Intelligent Filtering (for logging/debugging only now)
+            // We do NOT auto-fill the range text anymore as per user request.
+            const filteredChapters = intelligentChapterFilter(parsedBook);
+
+            // Log for debugging
+            const includedCount = filteredChapters.filter(ch => ch.shouldInclude).length;
+            const excludedCount = filteredChapters.length - includedCount;
+            if (excludedCount > 0) {
+              console.log(`Filter suggests excluding ${excludedCount} chapters.`);
+            }
+
+            // setRangeText(includedIndices.join(', ')); // DISABLED
           }
           setBook(parsedBook);
         } catch (e) {
@@ -287,42 +365,75 @@ export default function App() {
     saveState({ lastChapterIndex: index });
 
     // Speaking activity -> Update mascot to happy if not already (simple interaction)
-    setMascotMood('happy');
-    setMascotMessage("Listening matches! 🦊🎧");
+
 
     // If clicking the same chapter, stop it
     if (playingChapter === index) {
       Speech.stop();
       setPlayingChapter(null);
-      setMascotMood('sleepy'); // Back to idle
-      setMascotMessage("Taking a break?");
       return;
     }
 
     // Stop (previous) and play new
     Speech.stop();
     setPlayingChapter(index);
+    setMascotAction('reading');
 
     const textToRead = chapter.content || "No content found in this chapter.";
 
     Speech.speak(textToRead, {
-      rate: 1.0,
+      rate: 0.85,
       voice: selectedVoice?.identifier,
       onDone: () => {
         setPlayingChapter(null);
-        setMascotMood('happy'); // Finished reading
-        setMascotMessage("That was precise!");
       },
       onStopped: () => setPlayingChapter(null),
     });
+  };
+
+  const setMascotAction = (action: 'reading' | 'neutral' | 'celebrate') => {
+    switch (action) {
+      case 'reading':
+        setVideoSource(require('./assets/Echo_Looking_Down.mp4'));
+        setIsLooping(true);
+        break;
+      case 'celebrate':
+        setVideoSource(require('./assets/Echo_Celebrating.mp4'));
+        setIsLooping(true);
+        break;
+      case 'neutral':
+      default:
+        setVideoSource(require('./assets/Echo_Neutral_2.mp4'));
+        setIsLooping(true);
+        break;
+    }
   };
 
   const previewVoice = (voice: Speech.Voice) => {
     Speech.stop();
     Speech.speak(`Hello, I am ${voice.name}. This is a preview.`, {
       voice: voice.identifier,
-      rate: 1.0
+      rate: 0.85
     });
+  };
+
+  const handleMascotTap = () => {
+    resetInactivityTimer(); // Reset sleep timer on interaction
+    if (videoSource === require('./assets/Echo_Celebrating.mp4')) return; // Already celebrating
+
+    // Play celebration
+    setVideoSource(require('./assets/Echo_Celebrating.mp4'));
+    setIsLooping(false); // Play once then stop (handled by status update)
+  };
+
+  const onPlaybackStatusUpdate = (status: any) => {
+    if (status.didJustFinish) {
+      // If we just finished celebrating, go back to neutral
+      if (videoSource === require('./assets/Echo_Celebrating.mp4')) {
+        setVideoSource(require('./assets/Echo_Neutral_2.mp4'));
+        setIsLooping(true);
+      }
+    }
   };
 
   const getSelectedIndices = (): number[] => {
@@ -366,7 +477,6 @@ export default function App() {
     // Simulate Conversion / Saving to Library
     const storagePath = FileSystem.documentDirectory + "Audiobooks/" + book.title.replace(/[^a-z0-9]/gi, '_');
 
-    // Create Dir
     try {
       await FileSystem.makeDirectoryAsync(storagePath, { intermediates: true });
     } catch (e) {
@@ -422,38 +532,46 @@ export default function App() {
 
   if (isRestoring) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#3b5998', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#ffffff" />
-        <Text style={{ color: 'white', marginTop: 10 }}>Loading Library...</Text>
+      <View style={{ flex: 1, backgroundColor: theme.colors.background, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.text.tint} />
+        <Text style={{ marginTop: theme.spacing.md, ...theme.typography.body, color: theme.colors.text.secondary }}>Loading Library...</Text>
       </View>
     );
   }
 
   return (
     <SafeAreaProvider>
-      <LinearGradient
-        colors={['#4c669f', '#3b5998', '#192f6a']}
+      <View
         style={styles.container}
       >
         <SafeAreaView style={styles.safeArea}>
           <ScrollView contentContainerStyle={styles.scrollContent}>
 
             {/* Mascot / Header Section */}
+            {/* Mascot / Header Section */}
             <View style={styles.mascotContainer}>
-              <View>
-                <Text style={styles.title}>Audiobooks Mobile</Text>
-                <View style={styles.streakBadge}>
-                  <Text style={styles.streakText}>🔥 {streak} Day Streak</Text>
-                </View>
-              </View>
-              <View style={{ alignItems: 'center' }}>
-                <Image
-                  source={require('./assets/echo_neutral.jpg')}
-                  style={styles.mascotImage}
+              <TouchableOpacity
+                onPress={handleMascotTap}
+                activeOpacity={0.8}
+                style={styles.mascotContainerWrapper}
+              >
+                <Video
+                  ref={videoRef}
+                  style={{ width: '100%', height: '100%' }}
+                  source={videoSource}
+                  useNativeControls={false}
+                  resizeMode={ResizeMode.COVER}
+                  isLooping={isLooping}
+                  shouldPlay={true}
+                  isMuted={true}
+                  onPlaybackStatusUpdate={onPlaybackStatusUpdate}
                 />
-                <View style={styles.speechBubble}>
-                  <Text style={styles.speechText}>{mascotMessage}</Text>
-                </View>
+              </TouchableOpacity>
+
+              <Text style={styles.title}>Audiobooks Mobile</Text>
+
+              <View style={styles.streakBadge}>
+                <Text style={styles.streakText}>🔥 {streak} Day Streak</Text>
               </View>
             </View>
 
@@ -461,7 +579,7 @@ export default function App() {
               {/* Step 1: Import */}
               <Text style={styles.subtitle}>Step 1: Import Book</Text>
               <Text style={styles.helperText}>Note: Please select one EPUB file at a time.</Text>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: theme.spacing.md }}>
                 <Button title="Select File" onPress={pickDocument} />
                 {selectedFile && <Button title="Reset / Clear" onPress={async () => {
                   setSelectedFile(null);
@@ -481,20 +599,19 @@ export default function App() {
               {
                 selectedFile && book && (
                   <View style={styles.fileInfo}>
-                    <Text style={styles.fileName}>Selected: {selectedFile.name}</Text>
                     {selectedFile.name.toLowerCase().endsWith('.pdf') && (
-                      <View style={{ backgroundColor: '#fff3cd', padding: 10, borderRadius: 5, marginTop: 5, marginBottom: 10, width: '100%' }}>
-                        <Text style={{ color: '#856404', fontSize: 12, fontWeight: 'bold' }}>⚠️ PDF Mode (Experimental)</Text>
-                        <Text style={{ color: '#856404', fontSize: 12 }}>Pages are treated as chapters. Text extraction may be imperfect for scanned documents.</Text>
+                      <View style={{ backgroundColor: theme.colors.text.warning + '20', padding: theme.spacing.md, borderRadius: theme.borderRadius.sm, marginTop: theme.spacing.sm, marginBottom: theme.spacing.md, width: '100%' }}>
+                        <Text style={{ ...theme.typography.caption1, fontWeight: 'bold', color: theme.colors.text.warning }}>⚠️ PDF Mode (Experimental)</Text>
+                        <Text style={{ ...theme.typography.caption1, color: theme.colors.text.warning }}>Pages are treated as chapters. Text extraction may be imperfect for scanned documents.</Text>
                       </View>
                     )}
                     <View style={styles.bookInfo}>
-                      <Text style={styles.bookTitle}>{book.title}</Text>
+                      <Text style={styles.bookTitle}>{book.title.replace(/\.pd[f]$/i, '').replace(/\.epub$/i, '')}</Text>
                       <Text style={styles.bookAuthor}>{book.author}</Text>
 
                       {/* Step 2: Selection */}
                       <Text style={styles.sectionHeader}>Step 2: Select {selectedFile.name.toLowerCase().endsWith('.pdf') ? 'Pages' : 'Chapters'}</Text>
-                      <Text style={styles.helperText}>Enter range (e.g. 1-10) or leave empty for all.</Text>
+                      <Text style={styles.helperText}>Enter range (e.g. 1-10). Check "Chapter Index" below for titles.</Text>
                       <TextInput
                         style={styles.input}
                         placeholder="e.g. 1-5, 8"
@@ -508,8 +625,8 @@ export default function App() {
 
                       {/* Step 3: Voice Selection */}
                       <Text style={styles.sectionHeader}>Step 3: Choose Narrator</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5, backgroundColor: '#f9f9f9', padding: 10, borderRadius: 5, borderWidth: 1, borderColor: '#ccc' }}>
-                        <Text numberOfLines={1} style={{ flex: 1, marginRight: 10 }}>{selectedVoice ? selectedVoice.name : "Default"}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: theme.spacing.xs, backgroundColor: '#f9f9f9', padding: theme.spacing.md, borderRadius: theme.borderRadius.sm, borderWidth: 1, borderColor: theme.colors.border }}>
+                        <Text numberOfLines={1} style={{ flex: 1, marginRight: theme.spacing.md }}>{selectedVoice ? selectedVoice.name : "Default"}</Text>
                         <Button title="Change" onPress={() => setShowVoiceModal(true)} />
                       </View>
                       <Text style={styles.helperText}>Tip: Download "Enhanced" voices in iOS Settings &gt; Accessibility &gt; Spoken Content.</Text>
@@ -543,6 +660,9 @@ export default function App() {
 
                     {/* Chapter List Preview */}
                     <Text style={[styles.sectionHeader, { marginTop: 20 }]}>Chapter Index</Text>
+                    <Text style={[styles.helperText, { marginBottom: 10 }]}>
+                      Use these <Text style={{ fontWeight: 'bold' }}># numbers</Text> in Step 2 above.
+                    </Text>
                     <View style={styles.chapterList}>
                       <ScrollView style={{ maxHeight: 200 }} nestedScrollEnabled={true}>
                         {book.chapters.map((c, i) => (
@@ -601,8 +721,8 @@ export default function App() {
           </Modal>
 
         </SafeAreaView>
-        <StatusBar style="light" />
-      </LinearGradient>
+        <StatusBar style="dark" />
+      </View>
     </SafeAreaProvider>
   );
 }
@@ -610,6 +730,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: theme.colors.background,
   },
   safeArea: {
     flex: 1,
@@ -617,179 +738,166 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     alignItems: 'center',
-    padding: 20,
+    padding: theme.spacing.lg,
     paddingBottom: 50,
   },
   // Mascot Styles
-  mascotImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 2,
-    borderColor: '#fff',
-    marginBottom: 5,
-    backgroundColor: '#ddd' // Fallback
+  mascotContainerWrapper: {
+    width: 120,
+    height: 120,
+    borderRadius: theme.borderRadius.round,
+    // borderWidth: 2, // Removed border for cleaner look
+    // borderColor: theme.colors.text.secondary, 
+    marginBottom: theme.spacing.xs,
+    backgroundColor: '#000',
+    overflow: 'hidden', // Clip video content
   },
   mascotContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: 'column', // Centered layout
+    justifyContent: 'center',
     alignItems: 'center',
     width: '100%',
-    maxWidth: 400,
-    marginBottom: 20,
-    marginTop: 10,
+    marginBottom: theme.spacing.lg,
+    marginTop: 60, // 60pt top margin as per spec
   },
   streakBadge: {
-    backgroundColor: '#ff9800',
+    backgroundColor: 'rgba(255, 149, 0, 0.15)', // systemOrange with low alpha
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 15,
-    marginTop: 5,
-    alignSelf: 'flex-start'
+    marginTop: theme.spacing.sm,
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.text.warning
   },
   streakText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14
+    color: theme.colors.text.warning,
+    fontWeight: '600',
+    fontSize: theme.typography.subheadline.fontSize
   },
-  speechBubble: {
-    backgroundColor: 'white',
-    padding: 8,
-    borderRadius: 10,
-    marginTop: 5,
-    maxWidth: 150,
-    borderTopRightRadius: 0,
-  },
-  speechText: {
-    fontSize: 12,
-    color: '#333'
-  },
+
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: { width: -1, height: 1 },
-    textShadowRadius: 10
+    ...theme.typography.title1,
+    color: theme.colors.text.primary,
+    marginBottom: theme.spacing.xs,
+    textAlign: 'left'
   },
   subtitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    ...theme.typography.title3,
     marginTop: 0,
-    marginBottom: 5,
-    color: '#333'
+    marginBottom: theme.spacing.xs,
+    color: theme.colors.text.primary
   },
   card: {
     width: '100%',
     maxWidth: 400,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 20,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.lg,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3
   },
   helperText: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 10,
-    fontStyle: 'italic'
+    ...theme.typography.subheadline,
+    color: theme.colors.text.secondary,
+    marginBottom: theme.spacing.md,
+    // fontStyle: 'italic' // REMOVED ITALIC
   },
   status: {
-    marginTop: 10,
-    fontStyle: 'italic',
-    color: '#555',
+    marginTop: theme.spacing.md,
+    // fontStyle: 'italic', // REMOVED ITALIC 
+    ...theme.typography.subheadline,
+    color: theme.colors.text.secondary
   },
   fileInfo: {
-    marginTop: 20,
+    marginTop: theme.spacing.lg,
     width: '100%'
   },
   fileName: {
-    fontSize: 14,
-    color: '#555',
-    marginBottom: 5
+    ...theme.typography.caption1,
+    color: theme.colors.text.secondary,
+    marginBottom: theme.spacing.xs
   },
   bookInfo: {
     marginBottom: 0
   },
   bookTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 5
+    ...theme.typography.title2,
+    marginBottom: theme.spacing.xxs
   },
   bookAuthor: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 20
+    ...theme.typography.body,
+    color: theme.colors.text.secondary,
+    marginBottom: theme.spacing.lg
   },
   sectionHeader: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginTop: 15,
-    marginBottom: 5,
-    color: '#333',
+    ...theme.typography.title3,
+    marginTop: theme.spacing.md,
+    marginBottom: theme.spacing.xs,
+    color: theme.colors.text.primary,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: theme.colors.border,
     paddingBottom: 5
   },
   chapterList: {
-    marginTop: 10,
+    marginTop: theme.spacing.md,
     borderWidth: 1,
-    borderColor: '#eee',
-    borderRadius: 5,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.sm,
   },
   chapterRow: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee'
+    borderBottomColor: theme.colors.border
   },
   chapterItem: {
-    fontSize: 14
+    ...theme.typography.body
   },
   input: {
     borderWidth: 1,
     borderColor: '#ccc',
     padding: 10,
-    borderRadius: 5,
-    marginBottom: 5
+    borderRadius: theme.borderRadius.sm,
+    marginBottom: theme.spacing.xs
   },
   previewText: {
-    fontSize: 12,
-    color: '#007AFF',
-    marginBottom: 15
+    ...theme.typography.caption1,
+    color: theme.colors.text.tint,
+    marginBottom: theme.spacing.md
   },
   storageText: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 10,
-    backgroundColor: '#f0f0f0',
+    ...theme.typography.caption1,
+    color: theme.colors.text.secondary,
+    marginBottom: theme.spacing.md,
+    backgroundColor: theme.colors.background,
     padding: 5,
-    borderRadius: 5
+    borderRadius: theme.borderRadius.sm
   },
   progressContainer: {
-    marginTop: 10,
+    marginTop: theme.spacing.md,
     alignItems: 'center'
   },
   progressBar: {
     width: '100%',
     height: 10,
-    backgroundColor: '#eee',
-    borderRadius: 5,
+    backgroundColor: theme.colors.border,
+    borderRadius: theme.borderRadius.sm,
     overflow: 'hidden',
-    marginTop: 5
+    marginTop: theme.spacing.xs
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#007AFF'
+    backgroundColor: theme.colors.text.tint
   },
   progressText: {
-    fontSize: 12,
-    marginTop: 5,
-    color: '#555'
+    ...theme.typography.caption1,
+    marginTop: theme.spacing.xs,
+    color: theme.colors.text.secondary
   },
   // Modal Styles
   modalOverlay: {
@@ -800,29 +908,28 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: '80%',
-    backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 20,
+    backgroundColor: theme.colors.background,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.lg,
     maxHeight: '70%'
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
+    ...theme.typography.title3,
+    marginBottom: theme.spacing.md,
     textAlign: 'center'
   },
   voiceItem: {
-    padding: 15,
+    padding: theme.spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: theme.colors.border,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center'
   },
   selectedVoiceItem: {
-    backgroundColor: '#f0f8ff'
+    backgroundColor: theme.colors.text.tint + '20' // Low opacity tint
   },
   voiceName: {
-    fontSize: 16
+    ...theme.typography.body
   }
 });
